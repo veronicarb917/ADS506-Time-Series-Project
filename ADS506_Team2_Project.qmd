@@ -5,7 +5,283 @@ format: html
 ```{r}
 #| message: false
 #| warning: false
-# install.packages("fpp3"); library(fpp3)
-data <- read.csv("Data/get_it_done_pothole_requests_datasd.csv")
-head(data)
+# install.packages("fpp3")
+# install.packages("googledrive")
+library(fpp3)
+library(googledrive)
+library(readr)
+library(dplyr)
+library(gt)
+library(lubridate)
+library(ggplot2)
+
+```
+
+```{r}
+#data <- read.csv("Data/get_it_done_pothole_requests_datasd.csv")
+#head(data)
+```
+
+```{r}
+# load the data
+
+# Authenticate with Google Drive
+drive_auth(
+  scopes = "https://www.googleapis.com/auth/drive.readonly",
+  cache = FALSE
+)
+
+# Find your CSV file in Google Drive
+# drive_find("potholes.csv")
+
+# Download the file from Google Drive
+drive_download(
+  as_id("1bxDXSdQxkfXSBDMyDYjyO7ZqKZOavkU-"),
+  path = "potholes.csv",
+  overwrite = TRUE
+)
+
+# Read the downloaded CSV into R
+potholes <- read_csv("potholes.csv")
+
+#head(potholes)
+```
+
+```{r}
+# verify data types, number of unique values, and missing values
+
+data_summary <- data.frame(
+  column = names(potholes),
+  data_type = sapply(potholes, function(x) class(x)[1]),
+  unique_values = sapply(potholes, 
+                         function(x) n_distinct(x, na.rm = TRUE)),
+  missing_values = sapply(potholes, 
+                          function(x) sum(is.na(x))),
+  missing_percentage = sapply(potholes, 
+                              function(x) mean(is.na(x)) * 100)
+)
+
+data_summary %>%
+  gt(rowname_col = "column") %>%
+  tab_header(
+    title = "Data Quality Summary",
+    subtitle = "Data types, unique values and missing observations"
+  ) %>%
+  cols_label(
+    data_type = "Data Type",
+    unique_values = "Unique Values",
+    missing_values = "Missing Values",
+    missing_percentage = "Missing (%)"
+  ) %>%
+  fmt_number(
+    columns = c(unique_values, missing_values),
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = missing_percentage,
+    decimals = 2
+  ) %>%
+  data_color(
+    columns = missing_percentage,
+    palette = c("white", "#F4A6A6")
+  ) %>%
+  tab_options(
+    table.font.size = 12,
+    row.striping.include_table_body = TRUE
+  )
+```
+
+```{r}
+
+# Columns to remove
+removed <- c(
+  "service_request_id",
+  "service_request_parent_id",
+  "sap_notification_number",
+  "service_name",
+  "service_name_detail",
+  "lat",
+  "lng",
+  "street_address",
+  "zipcode",
+  "park_name",
+  "referred",
+  "iamfloc",
+  "floc",
+  "public_description"
+)
+
+# Columns used to identify incomplete observations
+missing <- c(
+  "comm_plan_code",
+  "comm_plan_name",
+  "council_district"
+)
+
+# Check zipcode-to-council-district relationship
+zipcode_check <- potholes %>%
+  distinct(zipcode, council_district) %>%
+  count(zipcode) %>%
+  filter(n > 1)
+
+# Create lookup table, retaining only unambiguous matches
+district_lookup <- potholes %>%
+  filter(!is.na(zipcode), !is.na(council_district)) %>%
+  distinct(zipcode, council_district) %>%
+  group_by(zipcode) %>%
+  filter(n() == 1) %>%
+  ungroup()
+
+# Clean and impute data
+potholes2 <- potholes |>
+  mutate(
+    date_closed = coalesce(
+      date_closed,
+      date_requested + days(case_age_days)
+    )
+  ) |>
+  left_join(
+    district_lookup,
+    by = "zipcode",
+    suffix = c("", "_lookup")
+  ) |>
+  mutate(
+    council_district = coalesce(
+      council_district,
+      council_district_lookup
+    )
+  ) |>
+  select(-council_district_lookup) |>
+  select(-all_of(removed)) |>
+  filter(if_all(all_of(missing), ~ !is.na(.x)))
+
+# Check observations removed
+cat("Original observations:", original_n, "\n")
+cat("Final observations:", nrow(potholes2), "\n")
+cat("Observations removed:", original_n - nrow(potholes2), "\n")
+
+# Create data quality summary
+data_summary2 <- data.frame(
+  column = names(potholes2),
+  data_type = sapply(potholes2, function(x) class(x)[1]),
+  unique_values = sapply(potholes2,
+                         function(x) n_distinct(x, na.rm = TRUE)),
+  missing_values = sapply(potholes2,
+                          function(x) sum(is.na(x))),
+  missing_percentage = sapply(potholes2,
+                               function(x) mean(is.na(x)) * 100)
+)
+
+# Display summary table
+data_summary2 %>%
+  gt(rowname_col = "column") %>%
+  tab_header(
+    title = "Data Quality Summary After Cleaning",
+    subtitle = "Data types, unique values and missing observations"
+  ) %>%
+  cols_label(
+    data_type = "Data Type",
+    unique_values = "Unique Values",
+    missing_values = "Missing Values",
+    missing_percentage = "Missing (%)"
+  ) %>%
+  fmt_number(
+    columns = c(unique_values, missing_values),
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = missing_percentage,
+    decimals = 2
+  ) %>%
+  data_color(
+    columns = missing_percentage,
+    palette = c("white", "#F4A6A6")
+  ) %>%
+  tab_options(
+    table.font.size = 12,
+    row.striping.include_table_body = TRUE
+  )
+
+```
+
+```{r}
+# convert datetime data in date_requested and date_closed columns to date only
+
+potholes3 <- potholes2 |>
+  mutate(
+    date_requested = as.Date(date_requested),
+    date_closed = as.Date(date_closed)
+  )
+
+# create tsibbles of potholes3 indexed on date_requested and date_closed and aggregate the counts of tickets requested or closed each day
+
+req_ts <- potholes3 |>
+  count(date_requested, name = "requests") %>%
+  as_tsibble(index = date_requested)
+
+cls_ts <- potholes3 |>
+  count(date_closed, name = "closed") %>%
+  as_tsibble(index = date_closed)
+```
+
+```{r}
+# view plot of requests over time
+
+req_ts %>%
+  autoplot(requests) +
+  labs(
+    title = "Daily Pothole Requests",
+    x = "Date",
+    y = "Number of Requests"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# view plot of closed cases over time
+
+cls_ts %>%
+  autoplot(closed) +
+  labs(
+    title = "Daily Pothole Requests Closed",
+    x = "Date",
+    y = "Number of Requests Closed"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# aggregate cases opened based on month
+
+monreq_ts <- potholes3 %>%
+  mutate(month = yearmonth(date_requested)) %>%
+  count(month, name = "requests") %>%
+  as_tsibble(index = month)
+
+monreq_ts %>%
+  autoplot(requests) +
+  labs(
+    title = "Monthly Pothole Requests",
+    x = "Date",
+    y = "Number of Requests"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# aggregate cases closed based on month
+
+moncls_ts <- potholes3 %>%
+  mutate(month = yearmonth(date_closed)) %>%
+  count(month, name = "closed") %>%
+  as_tsibble(index = month)
+
+moncls_ts %>%
+  autoplot(closed) +
+  labs(
+    title = "Monthly Pothole Requests Closed",
+    x = "Date",
+    y = "Number of Requests Closed"
+  ) +
+  theme_minimal()
 ```
