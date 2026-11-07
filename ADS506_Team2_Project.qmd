@@ -7,6 +7,8 @@ format: html
 #| warning: false
 # install.packages("fpp3")
 # install.packages("googledrive")
+#install.packages(c("usethis", "gitcreds"))
+#install.packages("rlang")
 library(fpp3)
 library(googledrive)
 library(readr)
@@ -14,12 +16,16 @@ library(dplyr)
 library(gt)
 library(lubridate)
 library(ggplot2)
+#library(c(usethis, gitcreds))
 
 ```
 
 ```{r}
-#data <- read.csv("Data/get_it_done_pothole_requests_datasd.csv")
-#head(data)
+# git config --global user.name "user"
+# git config --global user.email "email"
+# 
+# data <- read.csv("Data/get_it_done_pothole_requests_datasd.csv")
+# head(data)
 ```
 
 ```{r}
@@ -111,12 +117,12 @@ removed <- c(
   "public_description"
 )
 
-# Columns used to identify incomplete observations
-missing <- c(
-  "comm_plan_code",
-  "comm_plan_name",
-  "council_district"
-)
+# # Columns used to identify incomplete observations
+# missing <- c(
+#   "comm_plan_code",
+#   "comm_plan_name",
+#   "council_district"
+# )
 
 # Check zipcode-to-council-district relationship
 zipcode_check <- potholes %>%
@@ -152,13 +158,7 @@ potholes2 <- potholes |>
     )
   ) |>
   select(-council_district_lookup) |>
-  select(-all_of(removed)) |>
-  filter(if_all(all_of(missing), ~ !is.na(.x)))
-
-# Check observations removed
-cat("Original observations:", original_n, "\n")
-cat("Final observations:", nrow(potholes2), "\n")
-cat("Observations removed:", original_n - nrow(potholes2), "\n")
+  select(-all_of(removed))
 
 # Create data quality summary
 data_summary2 <- data.frame(
@@ -219,15 +219,92 @@ req_ts <- potholes3 |>
   count(date_requested, name = "requests") %>%
   as_tsibble(index = date_requested)
 
+print(has_gaps(req_ts))
+
+# Identify missing dates
+print(scan_gaps(req_ts))
+
 cls_ts <- potholes3 |>
   count(date_closed, name = "closed") %>%
   as_tsibble(index = date_closed)
+
+print(has_gaps(cls_ts))
+
+print(scan_gaps(cls_ts))
+```
+
+```{r}
+# Missing dates in requested-date tsibble
+missing_req <- req_ts %>%
+  scan_gaps()
+
+# Missing dates in closed-date tsibble
+missing_cls <- cls_ts %>%
+  scan_gaps()
+
+missing_req_check <- missing_req %>%
+  rename(date = date_requested) %>%
+  left_join(
+    potholes %>%
+      mutate(date = as.Date(date_requested)) %>%
+      count(date, name = "original_records"),
+    by = "date"
+  ) %>%
+  mutate(
+    present_in_original = !is.na(original_records)
+  )
+
+missing_cls_check <- missing_cls %>%
+  rename(date = date_closed) %>%
+  left_join(
+    potholes %>%
+      mutate(date = as.Date(date_closed)) %>%
+      count(date, name = "original_records"),
+    by = "date"
+  ) %>%
+  mutate(
+    present_in_original = !is.na(original_records)
+  )
+
+# Requested dates
+missing_req_check %>%
+  count(present_in_original) %>%
+  rename(
+    Present_in_Original = present_in_original,
+    Number_of_Dates = n
+  )
+
+# Closed dates
+missing_cls_check %>%
+  count(present_in_original) %>%
+  rename(
+    Present_in_Original = present_in_original,
+    Number_of_Dates = n
+  )
+
+```
+
+```{r}
+# the missing dates did not have any requests or cases closed
+# the missing dates were filled in with zero events on those dates
+
+req_ts_complete <- req_ts %>%
+  fill_gaps() %>%
+  mutate(date_requested = replace_na(date_requested, 0))
+
+has_gaps(req_ts_complete)
+
+cls_ts_complete <- cls_ts %>%
+  fill_gaps() %>%
+  mutate(date_closed = replace_na(date_closed, 0))
+
+has_gaps(cls_ts_complete)
 ```
 
 ```{r}
 # view plot of requests over time
 
-req_ts %>%
+req_ts_complete %>%
   autoplot(requests) +
   labs(
     title = "Daily Pothole Requests",
@@ -240,7 +317,7 @@ req_ts %>%
 ```{r}
 # view plot of closed cases over time
 
-cls_ts %>%
+cls_ts_complete %>%
   autoplot(closed) +
   labs(
     title = "Daily Pothole Requests Closed",
@@ -253,9 +330,14 @@ cls_ts %>%
 ```{r}
 # aggregate cases opened based on month
 
-monreq_ts <- potholes3 %>%
+monreq_ts <- req_ts_complete %>%
   mutate(month = yearmonth(date_requested)) %>%
-  count(month, name = "requests") %>%
+  as_tibble() %>%
+  group_by(month) %>%
+  summarise(
+    requests = sum(requests, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
   as_tsibble(index = month)
 
 monreq_ts %>%
@@ -271,9 +353,14 @@ monreq_ts %>%
 ```{r}
 # aggregate cases closed based on month
 
-moncls_ts <- potholes3 %>%
+moncls_ts <- cls_ts_complete %>%
   mutate(month = yearmonth(date_closed)) %>%
-  count(month, name = "closed") %>%
+  as_tibble() %>%
+  group_by(month) %>%
+  summarise(
+    closed = sum(closed, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
   as_tsibble(index = month)
 
 moncls_ts %>%
@@ -284,4 +371,137 @@ moncls_ts %>%
     y = "Number of Requests Closed"
   ) +
   theme_minimal()
+```
+
+```{r}
+# Split request data into train/validation sets
+req_trn <- req_ts_complete |>
+  filter_index(. ~ '2024-12-31')
+req_val <- req_ts_complete |>
+  filter_index('2025-01-01' ~ .)
+```
+
+```{r}
+# Split closed data into train/validation sets
+cls_trn <- cls_ts_complete |>
+  filter_index(. ~ '2024-12-31')
+cls_val <- cls_ts_complete |>
+  filter_index('2025-01-01' ~ .)
+```
+
+```{r}
+# Time Series Linear Model - Requests
+req_tslm <- req_trn %>%
+  model(
+    auto_tslm = TSLM(requests),
+    tr_tslm = TSLM(requests ~ trend()),
+    sea_tslm = TSLM(requests ~ season()),
+    tslm = TSLM(requests ~ trend() + season())
+  )
+
+# Model summary
+report(req_tslm)
+
+glance(req_tslm) %>%
+  select(.model, r_squared, adj_r_squared, AIC, AICc, BIC) %>%
+  arrange(AIC) %>%
+  gt() %>%
+  tab_header(
+    title = "TSLM Model Comparison",
+    subtitle = "Models ranked by AIC"
+  ) %>%
+  cols_label(
+    .model = "Model",
+    r_squared = "R-squared",
+    adj_r_squared = "Adjusted R-squared",
+    AIC = "AIC",
+    AICc = "AICc",
+    BIC = "BIC"
+  ) %>%
+  fmt_number(
+    columns = c(r_squared, adj_r_squared),
+    decimals = 3
+  ) %>%
+    fmt_number(
+    columns = c(AIC, AICc, BIC),
+    decimals = 0
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = 1)
+  )
+
+req_trn %>%
+  autoplot(requests) +
+  autolayer(
+    fitted(req_tslm |> select("tslm")),
+    .fitted,
+    colour = "red"
+  ) +
+  labs(
+    title = "TSLM: Monthly Pothole Requests",
+    x = "Date",
+    y = "Number of Requests"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Time Series Linear Model - Closed
+cls_tslm <- cls_trn %>%
+  model(
+    auto_tslm = TSLM(closed),
+    tr_tslm = TSLM(closed ~ trend()),
+    sea_tslm = TSLM(closed ~ season()),
+    tslm = TSLM(closed ~ trend() + season())
+  )
+
+# Model summary
+report(cls_tslm)
+
+glance(cls_tslm) %>%
+  select(.model, r_squared, adj_r_squared, AIC, AICc, BIC) %>%
+  arrange(AIC) %>%
+  gt() %>%
+  tab_header(
+    title = "TSLM Model Comparison",
+    subtitle = "Models ranked by AIC"
+  ) %>%
+  cols_label(
+    .model = "Model",
+    r_squared = "R-squared",
+    adj_r_squared = "Adjusted R-squared",
+    AIC = "AIC",
+    AICc = "AICc",
+    BIC = "BIC"
+  ) %>%
+  fmt_number(
+    columns = c(r_squared, adj_r_squared),
+    decimals = 3
+  ) %>%
+    fmt_number(
+    columns = c(AIC, AICc, BIC),
+    decimals = 0
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = 1)
+  )
+
+
+cls_trn %>%
+  autoplot(closed) +
+  autolayer(
+    fitted(cls_tslm |> select("tslm")),
+    .fitted,
+    colour = "red"
+  ) +
+  labs(
+    title = "TSLM: Monthly Pothole Requests Closed",
+    x = "Date",
+    y = "Number of Requests Closed"
+  ) +
+  theme_minimal()
+
 ```
