@@ -1,0 +1,572 @@
+---
+title: "Pothole Requests"
+format: html
+editor: visual
+---
+
+# EDA and Preliminary ETS models
+
+Pothole Requests Forecasts
+
+```{r}
+# Training: Jun 2016 - Oct 2024 
+# Validation: Nov 24 - Oct 25
+# Test: Nov 25 - Oct 26
+```
+
+```{r}
+library(readr)
+library(tidyverse) 
+library(fpp3)  
+dir.create('figures', showWarnings = FALSE)
+```
+
+## Data Inspection
+
+```{r}
+pothole <- read_csv('Data/get_it_done_pothole_requests_datasd.csv')
+head(pothole)
+```
+
+```{r}
+dim(pothole)
+```
+
+```{r}
+pothole |> 
+  select(date_requested, date_closed, zipcode, sap_notification_number) |>
+  glimpse()
+```
+
+```{r}
+pothole |> summarise(
+  # first observation
+  first = min(date_requested),
+  # last observation
+  last = max(date_requested),
+  missing_dates = sum(is.na(date_requested))
+)
+```
+
+There are no missing dates in the pothole data set.
+
+```{r}
+# duplicate requests store the id of the original "parent" request in 'service_request_parent_id' 
+# is.na checks for distinct potholes requests that returns true if NA in 'service_request_parent_id' 
+pothole_unique <- pothole |> 
+  mutate(is_unique = is.na(service_request_parent_id))
+
+# orignal vs duplicates 
+pothole_unique |> 
+  count(is_unique) |> 
+  mutate(share = n/sum(n))
+
+```
+
+Of the 181,105 records, 125,646 are unique pothole requests, meaning approximately 69% of pothole service requests refer to unique potholes.
+
+```{r}
+pothole_monthly <- pothole_unique |> 
+  # data to month 
+  mutate(month = yearmonth(date_requested)) |> 
+  # complete months only
+  filter(month >= yearmonth('2016 Jun'),
+         month <= yearmonth('2026 Oct')) |>
+  group_by(month) |> 
+  summarise(
+    unique_potholes = sum(is_unique), # distinct requests
+    total_reports = n(),              # all requests including duplicates
+    .groups = 'drop'
+  ) |> 
+  as_tsibble(index = month)
+pothole_monthly
+```
+
+```{r}
+has_gaps(pothole_monthly)
+```
+
+## Data Partitioning 
+
+```{r}
+# training set to fit models
+train_data <- pothole_monthly |> 
+  filter_index(. ~ '2024 Oct')
+
+# validation set to compare models and chose the best performing model
+val_data <- pothole_monthly |> 
+  filter_index('2024 Nov' ~ '2025 Oct')
+
+# test set for final evaluation 
+test_data <- pothole_monthly |> 
+  filter_index('2025 Nov' ~ .)
+
+
+```
+
+```{r}
+tibble(
+  set = c('train', 'validation', 'test'),
+  first = c(min(train_data$month), min(val_data$month), min(test_data$month)),
+  last = c(max(train_data$month), max(val_data$month), max(test_data$month)),
+  months = c(nrow(train_data), nrow(val_data), nrow(test_data))
+)
+
+```
+
+## EDA
+
+```{r}
+pothole_monthly |> 
+  autoplot(total_reports) +
+  labs(
+    title = 'Total Pothole Requests Reports',
+    y = 'Number of total reports'
+  )
+
+```
+
+```{r}
+pothole_monthly |> 
+  autoplot(unique_potholes) +
+  geom_vline(
+    xintercept = as.Date(c(yearmonth('2024 Nov'), yearmonth('2025 Nov'))),
+    linetype = 'dashed', linewidth = 0.5, colour ='orange') +
+  labs(
+    title = 'Monthly Unique Pothole Requests',
+    subtitle = 'Lines show validation and test periods',
+    y = 'Number of unique requests'
+  ) -> p_unique_pothole_ts
+
+ggsave('figures/unique_pothole_requests_monthly.png', plot = p_unique_pothole_ts,
+       width = 8, height = 5, dpi = 300)
+p_unique_pothole_ts
+```
+
+Monthly unique pothole requests show a slight upward trend, which may reflect increased use of the Get It Done program rather than worsening road damage.
+
+```{r}
+train_data |> 
+  gg_season(unique_potholes, labels = 'right') +
+  labs(
+    title = 'Sasonal plot: unique pothole requests (training period)',
+    y = 'Number of unique requests'
+  )
+```
+
+```{r}
+train_data |> 
+  as_tibble() |> 
+  mutate(
+    date = as.Date(month),
+    month_year = year(date) + if_else(month(date) >= 10, 1, 0),
+    w_month = factor(month.abb[month(date)],
+                     levels = month.abb[c(10:12, 1:9)])
+  ) |> 
+  filter(month_year >= 2017, month_year <= 2024) |>
+  ggplot(aes(x = w_month, y = unique_potholes,
+             colour = factor(month_year), group = month_year)) +
+  geom_line() +
+  labs(
+    title = "Seasonal plot by rainy season: unique pothole requests",
+    y = "Unique pothole requests per month", colour = "month_year",
+    x = 'Month'
+  )
+```
+
+```{r}
+# guerrero method
+lambda <- train_data |> 
+  features(unique_potholes, features = guerrero) |> 
+  pull(lambda_guerrero)
+lambda
+```
+
+### Data Transformation
+
+```{r}
+train_data |> 
+  autoplot(box_cox(unique_potholes, lambda)) +
+  labs(
+    title = paste0('Box-Cox transformed unique requests (lambda = ', round(lambda, 2), ')'),
+    y = 'Transformed requests',
+  )
+```
+
+```{r}
+train_data |> 
+  autoplot(log(unique_potholes)) +
+  labs(
+    title = 'Log transformed unique requests',
+    y = 'Transformed requests',
+  )
+```
+
+### Decomposition 
+
+```{r}
+train_data |> 
+  model(classical_decomposition(unique_potholes, type = 'additive')) |> 
+  components() |> 
+  autoplot() +
+  labs(
+    title = 'Additive decomposition (training)'
+  )-> p_add_decomp
+
+ggsave('figures/additive_decomposition_(training).png', plot = p_add_decomp,
+       width = 8, height = 5, dpi = 300)
+p_add_decomp
+```
+
+#### Additive decomposition interpretation
+
+The remainder in the additive decomposition shows that errors stay close to 0 in summer, while rising from 1100 to 1200 in winter. This means errors are extremely large during winter and almost nonexistent in summer. For instance, a positive peak of 1000 means there were 1000 more requests than expected based on the trend and season, while negative dips indicate fewer pothole requests. Overall, this suggests winters are harder to predict than summers.
+
+```{r}
+train_data |> 
+  model(classical_decomposition(unique_potholes, type = 'multiplicative')) |> 
+  components() |> 
+  autoplot() +
+  labs(
+    title = 'Multiplicative decomposition (training)'
+  )-> p_mult_decomp
+
+ggsave('figures/multiplicative_decomposition_(training).png', plot = p_mult_decomp,
+       width = 8, height = 5, dpi = 300)
+p_mult_decomp
+```
+
+#### Multiplicative decomposition interpretation
+
+The remainder in the multiplicative decomposition is distributed more evenly across the summer and winter months than in the additive decomposition. In multiplicative decomposition, if the remainder is close to 1, actual requests match the expected value. Peaks of about 1.5 indicate 50% more requests than expected, and negative dips of 0.8 indicate that actual requests were about 20% lower than expected. The multiplicative decomposition seems to fit monthly pothole requests slightly better because seasonal fluctuations are more similar in size across summer and winter months, indicating that variations are proportional to the level. This finding suggests that an ETS model with multiplicative components may fit the data better and produce more accurate forecasts.
+
+```{r}
+train_data |>
+  model(STL(unique_potholes ~ season(window = 'periodic'))) |>
+  components() |>
+  autoplot() +
+  labs(title = 'STL decomposition: original series (training period)')
+```
+
+```{r}
+# log transformed decomposition
+train_data |>
+  model(STL(log(unique_potholes) ~ season(window = 'periodic'))) |>
+  components() |>
+  autoplot() +
+  labs(title = 'STL decomposition: log series (training period)')
+  
+          
+```
+
+```{r}
+train_data |>
+  features(unique_potholes, feat_stl) |>
+  select(trend_strength, seasonal_strength_year) |>
+  mutate(series = 'original', .before = 1) |>
+  bind_rows(
+    train_data |>
+      features(log(unique_potholes), feat_stl) |>
+      select(trend_strength, seasonal_strength_year) |>
+      mutate(series = 'log', .before = 1)
+  )
+```
+
+```{r}
+# Lag plots: each panel plots this month's value against the value
+# k months earlier (lags 1 to 12). Points close to the diagonal line
+# mean months that far apart tend to have similar values.
+train_data |>
+  gg_lag(unique_potholes, geom = "point", lags = 1:12) +
+  labs(title = "Lag plots: unique pothole requests (training period)",
+       x = "Value k months earlier", y = "Current value")
+```
+
+```{r}
+# the correlation between the series and its own past values, for lags up three years
+# bars outside the dashed blue lines are larger than you'd expect from pure noise
+train_data |>
+  ACF(unique_potholes, lag_max = 36) |>
+  autoplot() +
+  labs(title = "Autocorrelation: unique pothole requests (training period)")
+```
+
+## Modeling
+
+### Exponential Smoothing
+
+```{r}
+# Exponential smoothing: ETS no trend and no seasonality only additive error
+fit_ses <- train_data |>
+  model(
+    ses = ETS(unique_potholes ~ error("A") + trend("N") + season("N"))
+    )
+report(fit_ses)
+```
+
+```{r}
+# comparison of fitted values with actual values
+augment(fit_ses) |> 
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = .fitted, colour = 'SES fitted')) +
+  labs(title = 'SES fitted values vs. actual (training)',
+       y= 'Number of unique requests')
+```
+
+```{r}
+# forecast 12 months
+fc_ses <- fit_ses |> forecast(h = 12)
+```
+
+```{r}
+fc_ses |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, unique_potholes, colour = 'red') +
+  labs(title = 'SES forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests')
+```
+
+```{r}
+accuracy(fc_ses, pothole_monthly)
+```
+
+### Multiplicative ETS
+
+```{r}
+#  ETS Multiplicative Method: Multiplicative error and season, with no Trend
+fit_mn <- train_data |>
+  model(
+    ETS_mnm = ETS(unique_potholes ~ error("M") + trend("N") + season("M"))
+  )
+report(fit_mn)
+
+```
+
+```{r}
+# comparison of fitted values with actual values
+augment(fit_mn) |> 
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = .fitted, colour = 'Multiplicative fitted')) +
+  labs(title = 'Multiplicative fitted values vs. actual (training)',
+       y= 'Number of unique requests')
+```
+
+```{r}
+# forecast 12 months
+fc_mn <- fit_mn |> forecast(h = 12)
+```
+
+```{r}
+fc_mn |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, unique_potholes, colour = 'red') +
+  labs(title = 'Mutiplicative Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests') 
+```
+
+```{r}
+accuracy(fc_mn, pothole_monthly)
+```
+
+```{r}
+# Exponential smoothing: ETS M,A,M
+fit_ma <- train_data |>
+  model(
+    ETS_mam = ETS(unique_potholes ~ error("M") + trend("A") + season("M"))
+  )
+report(fit_ma)
+```
+
+```{r}
+# comparison of fitted values with actual values
+augment(fit_ma) |> 
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = .fitted, colour = 'Additive Multiplicative fitted')) +
+  labs(title = 'ETS(M,A,M) fitted values vs. actual (training)',
+       y= 'Number of unique requests')
+
+```
+
+```{r}
+# forecast 12 months
+fc_ma <- fit_ma |> forecast(h = 12)
+```
+
+```{r}
+fc_ma |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, unique_potholes, colour = 'red') +
+  labs(title = 'ETS(M,A,M) Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests')
+```
+
+```{r}
+accuracy(fc_ma, pothole_monthly)
+```
+
+## Multiple Models Fit
+
+```{r}
+fit_all <- train_data |> 
+  model(
+    # baseline
+    ses = ETS(unique_potholes ~ error('A') + trend('N') + season('N')),
+    # additive errors and season
+    hw_add = ETS(unique_potholes ~ error('A') + trend('N') + season('A')),
+    # multiplicative errors and season (winter adds error percentage)
+    ets_mnm = ETS(unique_potholes ~ error('M') + trend('N') + season('M')),
+    # additive linear trend
+    ets_mam = ETS(unique_potholes ~ error('M') + trend('A') + season('M')),
+    # adding a damped trend
+    ets_madm = ETS(unique_potholes ~ error('M') + trend('Ad') + season('M')),
+    # auto selected
+    ets_auto = ETS(unique_potholes)
+  )
+
+```
+
+```{r}
+fit_all |>  select(ets_auto)
+```
+
+```{r}
+fit_all |> 
+  glance() |> 
+  select(.model, AIC, AICc, BIC) |> 
+  arrange(AICc)
+```
+
+```{r}
+fc_all <- fit_all |>  forecast(h = 12)
+
+fc_all |> 
+  accuracy(pothole_monthly) |> 
+  select(.model, RMSE, MAE, MAPE) |> 
+  left_join(
+    glance(fit_all) |> select(.model, AICc),
+    by = '.model'
+    ) |>
+  arrange(RMSE) 
+```
+
+```{r}
+# forecast 12 months
+hw_add_fc <- fit_all['hw_add'] |> forecast(h = 12)
+```
+
+### ETS(A,N,A)
+
+```{r}
+augment(fit_all |> select(hw_add)) |>
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = .fitted, colour = 'ETS(A,N,A) fitted')) +
+  labs(
+    title = 'ETS(A,N,A) fitted values vs. actual (training period)',
+    y = 'Number of unique requests'
+  ) -> p_ets_ana
+
+ggsave('figures/ETS(A,N,A)_fitted_values.png', plot = p_ets_ana,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana
+```
+
+```{r}
+fit_all |> select(hw_add) |> report() 
+```
+
+```{r}
+fc_all |> 
+  filter(.model == 'hw_add') |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, unique_potholes, colour = 'red') +
+  labs(title = 'ETS(A,N,A) Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests') -> p_ets_ana_fc
+
+ggsave('figures/ETS(A,N,A)_forecasts.png', plot = p_ets_ana_fc,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana_fc
+```
+
+#### ETS(A,N,A) Interpretation
+
+The ETS(A,N,A) model uses additive errors and additive seasonality, with no trend. This model captures the seasonal patterns in the training data fairly well. However, it tends to underestimate unusually large spikes in requests.
+
+The smoothing parameters are alpha and gamma. The alpha value (0.366) indicates that the model considers past observations while allowing the level to adjust as new data becomes available. The small gamma value (0.0001) indicates that the model expects the seasonal pattern to change very little and relies on a stable seasonal structure. The model’s AICc is 1678.17, and its RMSE is 424.24.
+
+The model's report indicates that January is expected to have about 700 more requests above the level, while the summer months are expected to have about 300 fewer requests below. Because of the additive components, these estimates remain the same every year regardless of the level.
+
+### ETS(M,Ad,M)
+
+```{r}
+augment(fit_all |> select(ets_madm)) |>
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = .fitted, colour = 'ETS(M,Ad,M) fitted')) +
+  labs(
+    title = 'ETS(M,Ad,M) fitted values vs. actual (training period)',
+    y = 'Number of unique requests'
+  )
+```
+
+```{r}
+fit_all |> select(ets_madm) |> report()
+```
+
+```{r}
+fc_all |> 
+  filter(.model == 'ets_madm') |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, unique_potholes, colour = 'red') +
+  labs(title = 'ETS(M,Ad,M) Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests')
+
+```
+
+### ETS(M,N,M)
+
+```{r}
+augment(fit_all |> select(ets_mnm)) |>
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = unique_potholes, colour = "Actual")) +
+  geom_line(aes(y = .fitted, colour = "ETS(M,N,M) fitted")) +
+  labs(
+    title = "ETS(M,N,M) fitted values vs. actual (training period)",
+    y = "Number of unique requests"
+  ) -> p_ets_mnm
+
+ggsave('figures/ETS(M,N,M)_fitted_values.png', plot = p_ets_mnm,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm
+```
+
+```{r}
+fit_all |> select(ets_mnm) |> report()
+```
+
+```{r}
+fc_all |> 
+  filter(.model == 'ets_mnm') |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, unique_potholes, colour = 'red') +
+  labs(title = 'ETS(M,N,M) Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests') -> p_ets_mnm_fc
+
+ggsave('figures/ETS(M,N,M)_forecasts.png', plot = p_ets_mnm_fc,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm_fc
+
+```
+
+#### ETS(M,N,M) Interpretation
+
+The ETS(M,N,M) model has multiplicative errors and seasonality and has no trend component. The fitted values closely match historical observations, capturing seasonal peaks and shifts in request volume.
+
+The estimated smoothing parameters provide additional insight into the model’s performance. The alpha value (0.709) indicates that the model places more weight on recent observations, allowing it to adjust more quickly to changes in request volume. Similar to the ETS(A,N,A) model, the small gamma value (0.0001) assumes a stable seasonal pattern. The model’s AICc is 1585.37, and its RMSE is 502.06.
+
+The model’s seasonal indices indicate that requests increase in January, February, March, and April, with estimated increases of about 74% above the level in March, 61% in February and January, and 39% in April, aligning with San Diego’s rainy season.
+
+Confidence intervals are narrower during low-demand months and wider during peak months because the model’s multiplicative errors scale with the level. In contrast, ETS(A,N,A) confidence intervals remain the same in summer and winter.
