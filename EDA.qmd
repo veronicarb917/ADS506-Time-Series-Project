@@ -1,6 +1,6 @@
 ---
 title: "Pothole Requests"
-format: html
+format: pdf
 editor: visual
 ---
 
@@ -74,7 +74,7 @@ pothole_monthly <- pothole_unique |>
          month <= yearmonth('2026 Oct')) |>
   group_by(month) |> 
   summarise(
-    unique_potholes = sum(is_unique), # distinct requests
+    requests_unique = sum(is_unique), # distinct requests
     total_reports = n(),              # all requests including duplicates
     .groups = 'drop'
   ) |> 
@@ -83,10 +83,27 @@ pothole_monthly
 ```
 
 ```{r}
+pothole_daily <- pothole_unique |>
+  mutate(day = as.Date(date_requested)) |>
+  count(day, name = "requests") |>
+  as_tsibble(index = day)
+
+# Are any days missing entirely?
+has_gaps(pothole_daily)
+
+# List the gaps: start date and length
+pothole_daily |>
+  count_gaps() |>
+  arrange(desc(.n))
+```
+
+A check of daily requests identified 8 days with no recorded requests. These were treated as actual zeros and had little effect on the monthly totals.
+
+```{r}
 has_gaps(pothole_monthly)
 ```
 
-## Data Partitioning 
+## Data Partitioning
 
 ```{r}
 # training set to fit models
@@ -128,7 +145,7 @@ pothole_monthly |>
 
 ```{r}
 pothole_monthly |> 
-  autoplot(unique_potholes) +
+  autoplot(requests_unique) +
   geom_vline(
     xintercept = as.Date(c(yearmonth('2024 Nov'), yearmonth('2025 Nov'))),
     linetype = 'dashed', linewidth = 0.5, colour ='orange') +
@@ -146,8 +163,42 @@ p_unique_pothole_ts
 Monthly unique pothole requests show a slight upward trend, which may reflect increased use of the Get It Done program rather than worsening road damage.
 
 ```{r}
+daily_requests <- pothole_monthly |> 
+  mutate(
+    days = lubridate::days_in_month(as.Date(month)),
+    unique_per_day = requests_unique / days,
+    reports_per_day = total_reports / days
+  )
+daily_requests 
+```
+
+```{r}
+daily_requests |> autoplot(reports_per_day) +
+  labs(
+    title = 'Total Pothole Requests per Day',
+    y = 'Number of total reports'
+  )
+```
+
+```{r}
+daily_requests |> autoplot(unique_per_day) +
+  labs(
+    title = 'Unique Pothole Requests per Day',
+    y = 'Number of unique requests'
+  )
+```
+
+```{r}
+pothole_monthly |>
+  mutate(dup_share = 1 - requests_unique / total_reports) |>
+  autoplot(dup_share) +
+  labs(title = 'Share of Pothole Reports That Are Duplicates',
+       y = 'Duplicate share', x = NULL)
+```
+
+```{r}
 train_data |> 
-  gg_season(unique_potholes, labels = 'right') +
+  gg_season(requests_unique, labels = 'right') +
   labs(
     title = 'Sasonal plot: unique pothole requests (training period)',
     y = 'Number of unique requests'
@@ -164,7 +215,7 @@ train_data |>
                      levels = month.abb[c(10:12, 1:9)])
   ) |> 
   filter(month_year >= 2017, month_year <= 2024) |>
-  ggplot(aes(x = w_month, y = unique_potholes,
+  ggplot(aes(x = w_month, y = requests_unique,
              colour = factor(month_year), group = month_year)) +
   geom_line() +
   labs(
@@ -177,7 +228,7 @@ train_data |>
 ```{r}
 # guerrero method
 lambda <- train_data |> 
-  features(unique_potholes, features = guerrero) |> 
+  features(requests_unique, features = guerrero) |> 
   pull(lambda_guerrero)
 lambda
 ```
@@ -186,7 +237,7 @@ lambda
 
 ```{r}
 train_data |> 
-  autoplot(box_cox(unique_potholes, lambda)) +
+  autoplot(box_cox(requests_unique, lambda)) +
   labs(
     title = paste0('Box-Cox transformed unique requests (lambda = ', round(lambda, 2), ')'),
     y = 'Transformed requests',
@@ -195,18 +246,18 @@ train_data |>
 
 ```{r}
 train_data |> 
-  autoplot(log(unique_potholes)) +
+  autoplot(log(requests_unique)) +
   labs(
     title = 'Log transformed unique requests',
     y = 'Transformed requests',
   )
 ```
 
-### Decomposition 
+### Decomposition
 
 ```{r}
 train_data |> 
-  model(classical_decomposition(unique_potholes, type = 'additive')) |> 
+  model(classical_decomposition(requests_unique, type = 'additive')) |> 
   components() |> 
   autoplot() +
   labs(
@@ -224,7 +275,7 @@ The remainder in the additive decomposition shows that errors stay close to 0 in
 
 ```{r}
 train_data |> 
-  model(classical_decomposition(unique_potholes, type = 'multiplicative')) |> 
+  model(classical_decomposition(requests_unique, type = 'multiplicative')) |> 
   components() |> 
   autoplot() +
   labs(
@@ -242,7 +293,7 @@ The remainder in the multiplicative decomposition is distributed more evenly acr
 
 ```{r}
 train_data |>
-  model(STL(unique_potholes ~ season(window = 'periodic'))) |>
+  model(STL(requests_unique ~ season(window = 'periodic'))) |>
   components() |>
   autoplot() +
   labs(title = 'STL decomposition: original series (training period)')
@@ -251,7 +302,7 @@ train_data |>
 ```{r}
 # log transformed decomposition
 train_data |>
-  model(STL(log(unique_potholes) ~ season(window = 'periodic'))) |>
+  model(STL(log(requests_unique) ~ season(window = 'periodic'))) |>
   components() |>
   autoplot() +
   labs(title = 'STL decomposition: log series (training period)')
@@ -261,12 +312,12 @@ train_data |>
 
 ```{r}
 train_data |>
-  features(unique_potholes, feat_stl) |>
+  features(requests_unique, feat_stl) |>
   select(trend_strength, seasonal_strength_year) |>
   mutate(series = 'original', .before = 1) |>
   bind_rows(
     train_data |>
-      features(log(unique_potholes), feat_stl) |>
+      features(log(requests_unique), feat_stl) |>
       select(trend_strength, seasonal_strength_year) |>
       mutate(series = 'log', .before = 1)
   )
@@ -277,7 +328,7 @@ train_data |>
 # k months earlier (lags 1 to 12). Points close to the diagonal line
 # mean months that far apart tend to have similar values.
 train_data |>
-  gg_lag(unique_potholes, geom = "point", lags = 1:12) +
+  gg_lag(requests_unique, geom = "point", lags = 1:12) +
   labs(title = "Lag plots: unique pothole requests (training period)",
        x = "Value k months earlier", y = "Current value")
 ```
@@ -286,7 +337,7 @@ train_data |>
 # the correlation between the series and its own past values, for lags up three years
 # bars outside the dashed blue lines are larger than you'd expect from pure noise
 train_data |>
-  ACF(unique_potholes, lag_max = 36) |>
+  ACF(requests_unique, lag_max = 36) |>
   autoplot() +
   labs(title = "Autocorrelation: unique pothole requests (training period)")
 ```
@@ -299,7 +350,7 @@ train_data |>
 # Exponential smoothing: ETS no trend and no seasonality only additive error
 fit_ses <- train_data |>
   model(
-    ses = ETS(unique_potholes ~ error("A") + trend("N") + season("N"))
+    ses = ETS(requests_unique ~ error("A") + trend("N") + season("N"))
     )
 report(fit_ses)
 ```
@@ -308,7 +359,7 @@ report(fit_ses)
 # comparison of fitted values with actual values
 augment(fit_ses) |> 
   ggplot(aes(x = month)) +
-  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = requests_unique, colour = 'Actual')) +
   geom_line(aes(y = .fitted, colour = 'SES fitted')) +
   labs(title = 'SES fitted values vs. actual (training)',
        y= 'Number of unique requests')
@@ -322,7 +373,7 @@ fc_ses <- fit_ses |> forecast(h = 12)
 ```{r}
 fc_ses |> 
   autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
-  autolayer(val_data, unique_potholes, colour = 'red') +
+  autolayer(val_data, requests_unique, colour = 'red') +
   labs(title = 'SES forecasts vs. Actual Validation Data',
        y = 'Number of unique requests')
 ```
@@ -337,7 +388,7 @@ accuracy(fc_ses, pothole_monthly)
 #  ETS Multiplicative Method: Multiplicative error and season, with no Trend
 fit_mn <- train_data |>
   model(
-    ETS_mnm = ETS(unique_potholes ~ error("M") + trend("N") + season("M"))
+    ETS_mnm = ETS(requests_unique ~ error("M") + trend("N") + season("M"))
   )
 report(fit_mn)
 
@@ -347,7 +398,7 @@ report(fit_mn)
 # comparison of fitted values with actual values
 augment(fit_mn) |> 
   ggplot(aes(x = month)) +
-  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = requests_unique, colour = 'Actual')) +
   geom_line(aes(y = .fitted, colour = 'Multiplicative fitted')) +
   labs(title = 'Multiplicative fitted values vs. actual (training)',
        y= 'Number of unique requests')
@@ -361,7 +412,7 @@ fc_mn <- fit_mn |> forecast(h = 12)
 ```{r}
 fc_mn |> 
   autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
-  autolayer(val_data, unique_potholes, colour = 'red') +
+  autolayer(val_data, requests_unique, colour = 'red') +
   labs(title = 'Mutiplicative Forecasts vs. Actual Validation Data',
        y = 'Number of unique requests') 
 ```
@@ -374,7 +425,7 @@ accuracy(fc_mn, pothole_monthly)
 # Exponential smoothing: ETS M,A,M
 fit_ma <- train_data |>
   model(
-    ETS_mam = ETS(unique_potholes ~ error("M") + trend("A") + season("M"))
+    ETS_mam = ETS(requests_unique ~ error("M") + trend("A") + season("M"))
   )
 report(fit_ma)
 ```
@@ -383,7 +434,7 @@ report(fit_ma)
 # comparison of fitted values with actual values
 augment(fit_ma) |> 
   ggplot(aes(x = month)) +
-  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = requests_unique, colour = 'Actual')) +
   geom_line(aes(y = .fitted, colour = 'Additive Multiplicative fitted')) +
   labs(title = 'ETS(M,A,M) fitted values vs. actual (training)',
        y= 'Number of unique requests')
@@ -398,7 +449,7 @@ fc_ma <- fit_ma |> forecast(h = 12)
 ```{r}
 fc_ma |> 
   autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
-  autolayer(val_data, unique_potholes, colour = 'red') +
+  autolayer(val_data, requests_unique, colour = 'red') +
   labs(title = 'ETS(M,A,M) Forecasts vs. Actual Validation Data',
        y = 'Number of unique requests')
 ```
@@ -413,17 +464,17 @@ accuracy(fc_ma, pothole_monthly)
 fit_all <- train_data |> 
   model(
     # baseline
-    ses = ETS(unique_potholes ~ error('A') + trend('N') + season('N')),
+    ses = ETS(requests_unique ~ error('A') + trend('N') + season('N')),
     # additive errors and season
-    hw_add = ETS(unique_potholes ~ error('A') + trend('N') + season('A')),
+    hw_add = ETS(requests_unique ~ error('A') + trend('N') + season('A')),
     # multiplicative errors and season (winter adds error percentage)
-    ets_mnm = ETS(unique_potholes ~ error('M') + trend('N') + season('M')),
+    ets_mnm = ETS(requests_unique ~ error('M') + trend('N') + season('M')),
     # additive linear trend
-    ets_mam = ETS(unique_potholes ~ error('M') + trend('A') + season('M')),
+    ets_mam = ETS(requests_unique ~ error('M') + trend('A') + season('M')),
     # adding a damped trend
-    ets_madm = ETS(unique_potholes ~ error('M') + trend('Ad') + season('M')),
+    ets_madm = ETS(requests_unique ~ error('M') + trend('Ad') + season('M')),
     # auto selected
-    ets_auto = ETS(unique_potholes)
+    ets_auto = ETS(requests_unique)
   )
 
 ```
@@ -462,7 +513,7 @@ hw_add_fc <- fit_all['hw_add'] |> forecast(h = 12)
 ```{r}
 augment(fit_all |> select(hw_add)) |>
   ggplot(aes(x = month)) +
-  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = requests_unique, colour = 'Actual')) +
   geom_line(aes(y = .fitted, colour = 'ETS(A,N,A) fitted')) +
   labs(
     title = 'ETS(A,N,A) fitted values vs. actual (training period)',
@@ -482,7 +533,7 @@ fit_all |> select(hw_add) |> report()
 fc_all |> 
   filter(.model == 'hw_add') |> 
   autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
-  autolayer(val_data, unique_potholes, colour = 'red') +
+  autolayer(val_data, requests_unique, colour = 'red') +
   labs(title = 'ETS(A,N,A) Forecasts vs. Actual Validation Data',
        y = 'Number of unique requests') -> p_ets_ana_fc
 
@@ -504,7 +555,7 @@ The model's report indicates that January is expected to have about 700 more req
 ```{r}
 augment(fit_all |> select(ets_madm)) |>
   ggplot(aes(x = month)) +
-  geom_line(aes(y = unique_potholes, colour = 'Actual')) +
+  geom_line(aes(y = requests_unique, colour = 'Actual')) +
   geom_line(aes(y = .fitted, colour = 'ETS(M,Ad,M) fitted')) +
   labs(
     title = 'ETS(M,Ad,M) fitted values vs. actual (training period)',
@@ -520,7 +571,7 @@ fit_all |> select(ets_madm) |> report()
 fc_all |> 
   filter(.model == 'ets_madm') |> 
   autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
-  autolayer(val_data, unique_potholes, colour = 'red') +
+  autolayer(val_data, requests_unique, colour = 'red') +
   labs(title = 'ETS(M,Ad,M) Forecasts vs. Actual Validation Data',
        y = 'Number of unique requests')
 
@@ -531,7 +582,7 @@ fc_all |>
 ```{r}
 augment(fit_all |> select(ets_mnm)) |>
   ggplot(aes(x = month)) +
-  geom_line(aes(y = unique_potholes, colour = "Actual")) +
+  geom_line(aes(y = requests_unique, colour = "Actual")) +
   geom_line(aes(y = .fitted, colour = "ETS(M,N,M) fitted")) +
   labs(
     title = "ETS(M,N,M) fitted values vs. actual (training period)",
@@ -551,7 +602,7 @@ fit_all |> select(ets_mnm) |> report()
 fc_all |> 
   filter(.model == 'ets_mnm') |> 
   autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
-  autolayer(val_data, unique_potholes, colour = 'red') +
+  autolayer(val_data, requests_unique, colour = 'red') +
   labs(title = 'ETS(M,N,M) Forecasts vs. Actual Validation Data',
        y = 'Number of unique requests') -> p_ets_mnm_fc
 
