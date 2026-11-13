@@ -1,0 +1,136 @@
+---
+title: "Pothole Requests"
+format: typst
+editor: visual
+---
+
+# Pothole Requests Forecasts
+
+```{r}
+#| message: false
+#| warning: false
+library(readr)
+library(tidyverse) 
+library(fpp3)  
+dir.create('figures', showWarnings = FALSE)
+```
+
+## Data Inspection
+
+```{r}
+pothole <- read_csv('Data/get_it_done_pothole_requests_datasd.csv')
+head(pothole)
+```
+
+```{r}
+dim(pothole)
+```
+
+```{r}
+pothole |> 
+  select(date_requested, date_closed, zipcode, council_district, sap_notification_number, case_age_days, status, date_closed) |>
+  glimpse()
+```
+
+```{r}
+pothole |> summarise(
+  # first observation
+  first_observation = min(date_requested),
+  # last observation
+  last_observation = max(date_requested),
+  missing_dates = sum(is.na(date_requested))
+)
+```
+
+### Filter to Unique Requests
+
+```{r}
+# duplicate requests store the id of the original "parent" request in 'service_request_parent_id' 
+# is.na checks for distinct potholes requests that returns true if NA in 'service_request_parent_id' 
+pothole_unique <- pothole |> 
+  mutate(is_unique = is.na(service_request_parent_id))
+
+# orignal vs duplicates 
+pothole_unique |> 
+  count(is_unique) |> 
+  mutate(share = n/sum(n))
+```
+
+69% of pothole service requests are unique
+
+```{r}
+# monthly potholes (unique)
+pothole_monthly <- pothole_unique |> 
+  # data to month 
+  mutate(month = yearmonth(date_requested)) |> 
+  # complete months only
+  filter(month >= yearmonth('2016 Jun'),
+         month <= yearmonth('2026 Oct')) |>
+  group_by(month) |> 
+  summarise(
+    requests_unique = sum(is_unique), # distinct requests
+    total_reports = n(),              # all requests including duplicates
+    .groups = 'drop'
+  ) |> 
+  as_tsibble(index = month)
+pothole_monthly
+```
+
+```{r}
+pothole_daily <- pothole_unique |>
+  mutate(day = as.Date(date_requested)) |>
+  count(day, name = "requests") |>
+  as_tsibble(index = day)
+
+# any days missing
+has_gaps(pothole_daily)
+
+# gaps
+pothole_daily |>
+  count_gaps() |>
+  arrange(desc(.n))
+```
+
+### Data Partitioning
+
+```{r}
+# training set to fit models
+train_data <- pothole_monthly |> 
+  filter_index(. ~ '2024 Oct')
+
+# validation set to compare models and chose the best performing model
+val_data <- pothole_monthly |> 
+  filter_index('2024 Nov' ~ '2025 Oct')
+
+# test set for final evaluation 
+test_data <- pothole_monthly |> 
+  filter_index('2025 Nov' ~ .)
+```
+
+```{r}
+tibble(
+  set = c('Train', 'Validation', 'Test'),
+  first = c(min(train_data$month), min(val_data$month), min(test_data$month)),
+  last = c(max(train_data$month), max(val_data$month), max(test_data$month)),
+  months = c(nrow(train_data), nrow(val_data), nrow(test_data))
+)
+```
+
+**Note:** We’re only using the training and validation sets, so we'll exclude the test set for now.
+
+```{r}
+pothole_monthly |> 
+  autoplot(requests_unique) +
+  geom_vline(
+    xintercept = as.Date(c(yearmonth('2024 Nov'), yearmonth('2025 Nov'))),
+    linetype = 'dashed', linewidth = 0.5, colour ='orange') +
+  labs(
+    title = 'Monthly Unique Pothole Requests',
+    subtitle = 'Lines show validation and test periods',
+    y = 'Number of unique requests'
+  ) -> p_unique_pothole_ts
+
+ggsave('figures/unique_pothole_requests_monthly.png', plot = p_unique_pothole_ts,
+       width = 8, height = 5, dpi = 300)
+p_unique_pothole_ts
+```
