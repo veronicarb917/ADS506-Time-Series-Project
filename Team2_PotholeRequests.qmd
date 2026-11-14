@@ -12,6 +12,7 @@ editor: visual
 library(readr)
 library(tidyverse) 
 library(fpp3)  
+library(patchwork)
 dir.create('figures', showWarnings = FALSE)
 ```
 
@@ -133,4 +134,324 @@ pothole_monthly |>
 ggsave('figures/unique_pothole_requests_monthly.png', plot = p_unique_pothole_ts,
        width = 8, height = 5, dpi = 300)
 p_unique_pothole_ts
+```
+
+**TSLM Modeling**
+
+```{r}
+# Time Series Linear Model - requests_unique
+req_tslm <- train_data %>%
+  model(
+    auto_tslm = TSLM(requests_unique),
+    tr_tslm = TSLM(requests_unique ~ trend()),
+    sea_tslm = TSLM(requests_unique ~ season()),
+    tslm = TSLM(requests_unique ~ trend() + season())
+  )
+
+# assessing the model fits
+glance(req_tslm) |>
+  select(.model, r_squared, adj_r_squared, AIC, AICc, BIC) |>
+  arrange(AIC) |>
+  mutate(
+    across(c(r_squared, adj_r_squared), ~ round(.x, 3)),
+    across(c(AIC, AICc, BIC), ~ round(.x, 0))
+  ) |>
+  knitr::kable(
+    col.names = c(
+      "Model",
+      "R-squared",
+      "Adjusted R-squared",
+      "AIC",
+      "AICc",
+      "BIC"
+    ),
+    caption = "TSLM Model Comparison (ranked by AIC)"
+  )
+
+train_data %>%
+  autoplot(requests_unique) +
+  autolayer(
+    fitted(req_tslm |> select("tslm")),
+    .fitted,
+    colour = "red"
+  ) +
+  labs(
+    title = "TSLM: Monthly Pothole Requests",
+    x = "Date",
+    y = "Number of Requests"
+  ) +
+  theme_minimal()
+
+# Transformations
+
+# find lambda for a Box-Cox transformation of the training data
+lambda <- train_data |>
+  features(requests_unique, features = guerrero) |>
+  pull(lambda_guerrero)
+
+# plot the transformed data side-by-side with the original data
+p1 <- train_data |> autoplot(requests_unique) +
+  labs(title = "Original Data", y = "Requests")
+
+p2 <- train_data |> autoplot(log(requests_unique)) +
+  labs(title = "Log Transformation", y = "Log requests")
+
+p3 <- train_data |> autoplot(box_cox(requests_unique, -0.9)) +
+  labs(title = "Box-Cox Transformation", y = "Box-Cox requests")
+
+p1 / p2 / p3
+
+# New TSLM models
+
+# fit TSLM models with different seasonal specifications
+tslm_models <- train_data %>%
+  model(
+    tslm = TSLM(requests_unique ~ trend() + season()),
+    bc_sea = TSLM(box_cox(requests_unique, lambda) ~ trend() + season()),
+    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 1)),
+    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 2)),
+    bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 3)),
+    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 4)),
+    bc_f5 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 5))
+  )
+
+# assessing the model fits
+glance(tslm_models) |>
+  select(.model, r_squared, adj_r_squared, AIC, AICc, BIC) |>
+  arrange(AIC) |>
+  mutate(
+    across(c(r_squared, adj_r_squared), ~ round(.x, 3)),
+    across(c(AIC, AICc, BIC), ~ round(.x, 0))
+  ) |>
+  knitr::kable(
+    col.names = c(
+      "Model",
+      "R-squared",
+      "Adjusted R-squared",
+      "AIC",
+      "AICc",
+      "BIC"
+    ),
+    caption = "TSLM Model Comparison (ranked by AIC)"
+  )
+
+# extract fitted values and residuals for each model
+fits <- tslm_models |>
+  augment()
+
+# plot the fitted values against the original training data
+tslm_fits <- tslm_models |>
+  augment()
+
+ggplot() +
+  geom_line(
+    data = train_data |> as_tibble(),
+    aes(x = month, y = requests_unique),
+    colour = "black",
+    linewidth = 0.8
+  ) +
+  geom_line(
+    data = tslm_fits |> as_tibble(),
+    aes(x = month, y = .fitted, colour = .model),
+    linewidth = 0.6
+  ) +
+  labs(
+    title = "Actual vs Fitted TSLM Models",
+    x = "Month",
+    y = "Unique Requests",
+    colour = "Model"
+  ) +
+  theme_minimal()
+
+# set up cross-validation method with the top three models
+
+# Set the final eligible CV origin
+cv_cutoff <- max(train_data$month) - 12
+
+# Keep only windows with 12 months of validation data available
+cv_tslm <- train_data |>
+  stretch_tsibble(.init = 60, .step = 3) |>
+  group_by(.id) |>
+  filter(max(month) <= cv_cutoff) |>
+  ungroup()
+
+cv_tslm_models <- cv_tslm %>%
+  model(
+    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 1)),
+    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 2)),
+    bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 3))
+  )
+
+cv_fc <- cv_tslm_models |>
+  forecast(h = 12)
+
+cv_fc |>
+  as_tibble() |>
+  group_by(.model) |>
+  summarize(
+    n = n(),
+    missing = sum(is.na(.mean)),
+    .groups = "drop"
+  )
+
+#glance(cv_tslm_models)
+
+cv_median <- cv_tslm_models |>
+  forecast(h = 12) |>
+  mutate(.median = quantile(requests_unique, 0.5)) |>
+  as_tibble()
+
+cv_accuracy <- cv_median |>
+  select(.model, .id, month, .median) |>
+  left_join(
+    train_data |>
+      as_tibble() |>
+      select(month, requests_unique),
+    by = "month"
+  ) |>
+  group_by(.model, .id) |>
+  summarise(
+    RMSE = sqrt(mean((requests_unique - .median)^2)),
+    MAE = mean(abs(requests_unique - .median)),
+    MAPE = mean(abs((requests_unique - .median) / requests_unique)) * 100,
+    .groups = "drop"
+  )
+
+cv_accuracy_summary <- cv_accuracy |>
+  group_by(.model) |>
+  summarise(
+    mean_RMSE = mean(RMSE),
+    mean_MAE = mean(MAE),
+    mean_MAPE = mean(MAPE),
+    .groups = "drop"
+  ) |>
+  arrange(mean_RMSE)
+
+knitr::kable(
+  cv_accuracy_summary,
+  digits = 2,
+  caption = "Rolling-Origin Cross-Validation Accuracy"
+)
+
+# Forecasting validation subset with the Box-Cox Transformed, Fourier K = 1
+# TSLM model
+
+tslm_final <- train_data |>
+  model(
+    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 1)),
+    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 2))
+  )
+
+tslm_final_fc <- tslm_final |>
+  forecast(h = 12)
+
+tslm_final_fc_med <- tslm_final_fc |>
+  mutate(
+    median_forecast = quantile(requests_unique, 0.5)
+  )
+
+tslm_final_accuracy <- tslm_final_fc_med |>
+  as_tibble() |>
+  select(.model, month, median_forecast) |>
+  left_join(
+    val_data |>
+      as_tibble() |>
+      select(month, requests_unique),
+    by = "month"
+  ) |>
+  group_by(.model) |>
+  summarise(
+    RMSE = sqrt(mean(
+      (requests_unique - median_forecast)^2,
+      na.rm = TRUE
+    )),
+    MAE = mean(
+      abs(requests_unique - median_forecast),
+      na.rm = TRUE
+    ),
+    MAPE = mean(
+      abs((requests_unique - median_forecast) / requests_unique),
+      na.rm = TRUE
+    ) * 100
+  )
+
+knitr::kable(
+  tslm_final_accuracy,
+  digits = 2,
+  caption = "Final TSLM Validation Accuracy"
+)
+
+# Plot forecasted values, fitted values, training data and validation data
+
+# Extract fitted values
+tslm_final_fits <- tslm_final |>
+  select(bc_f1) |>
+  augment() |>
+  mutate(
+    fitted_original = inv_box_cox(.fitted, lambda)
+  )
+
+# Plot
+ggplot() +
+  # Training data
+  geom_line(
+    data = train_data |> as_tibble(),
+    aes(x = month, y = requests_unique, colour = "Training data"),
+    linewidth = 0.8
+  ) +
+
+  # Fitted values
+  geom_line(
+    data = tslm_final_fits |> filter(.model == "bc_f1") |> as_tibble(),
+    aes(x = month, y = .fitted, colour = "Fitted values"),
+    linewidth = 0.8
+  ) +
+
+  # Validation data
+  geom_line(
+    data = val_data |> as_tibble(),
+    aes(x = month, y = requests_unique, colour = "Validation data"),
+    linewidth = 0.8
+  ) +
+
+  # Forecast
+  geom_line(
+    data = tslm_final_fc_med |> filter(.model == "bc_f1") |> as_tibble(),
+    aes(x = month, y = median_forecast, colour = "Forecast"),
+    linewidth = 0.8,
+    linetype = "dashed"
+  ) +
+  
+  scale_colour_manual(
+    values = c(
+      "Training data" = "black",
+      "Fitted values" = "#2C7FB8",
+      "Validation data" = "#D95F02",
+      "Forecast" = "#31A354"
+    )
+  ) +
+  
+  labs(
+    title = "TSLM: Actual vs Fitted vs Forecast",
+    subtitle = "Box-Cox transformation with Fourier K = 1",
+    x = "Month",
+    y = "Unique Requests",
+    colour = NULL
+  ) +
+  
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold")
+  )
 ```
