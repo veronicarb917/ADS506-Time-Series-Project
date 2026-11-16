@@ -1,6 +1,6 @@
 ---
 title: "Pothole Requests"
-format: typst
+format: pdf
 editor: visual
 ---
 
@@ -13,6 +13,7 @@ library(readr)
 library(tidyverse) 
 library(fpp3)  
 library(patchwork)
+library(gt)
 dir.create('figures', showWarnings = FALSE)
 ```
 
@@ -25,6 +26,50 @@ head(pothole)
 
 ```{r}
 dim(pothole)
+```
+
+```{r}
+# verify data types, number of unique values, and missing values
+
+data_summary <- data.frame(
+  column = names(pothole),
+  data_type = sapply(pothole, function(x) class(x)[1]),
+  unique_values = sapply(pothole, 
+                         function(x) n_distinct(x, na.rm = TRUE)),
+  missing_values = sapply(pothole, 
+                          function(x) sum(is.na(x))),
+  missing_percentage = sapply(pothole, 
+                              function(x) mean(is.na(x)) * 100)
+)
+
+data_summary %>%
+  gt(rowname_col = "column") %>%
+  tab_header(
+    title = "Data Quality Summary",
+    subtitle = "Data types, unique values and missing observations"
+  ) %>%
+  cols_label(
+    data_type = "Data Type",
+    unique_values = "Unique Values",
+    missing_values = "Missing Values",
+    missing_percentage = "Missing (%)"
+  ) %>%
+  fmt_number(
+    columns = c(unique_values, missing_values),
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = missing_percentage,
+    decimals = 2
+  ) %>%
+  data_color(
+    columns = missing_percentage,
+    palette = c("white", "#F4A6A6")
+  ) %>%
+  tab_options(
+    table.font.size = 12,
+    row.striping.include_table_body = TRUE
+  )
 ```
 
 ```{r}
@@ -136,7 +181,240 @@ ggsave('figures/unique_pothole_requests_monthly.png', plot = p_unique_pothole_ts
 p_unique_pothole_ts
 ```
 
-**TSLM Modeling**
+Monthly unique pothole requests show a slight upward trend, which may reflect increased use of the Get It Done program rather than worsening road damage.
+
+## EDA
+
+```{r}
+daily_requests <- pothole_monthly |> 
+  mutate(
+    days = lubridate::days_in_month(as.Date(month)),
+    unique_per_day = requests_unique / days,
+    reports_per_day = total_reports / days
+  )
+```
+
+```{r}
+daily_requests |> autoplot(reports_per_day) +
+  labs(
+    title = 'Total Pothole Requests per Day',
+    y = 'Number of total reports'
+  )
+```
+
+Average requests per day for each month.
+
+```{r}
+daily_requests |> autoplot(unique_per_day) +
+  labs(
+    title = 'Unique Pothole Requests per Day',
+    y = 'Number of unique requests'
+  )
+```
+
+Average unique requests per day for each month.
+
+```{r}
+pothole_monthly |>
+  mutate(dup_share = 1 - requests_unique / total_reports) |>
+  autoplot(dup_share) +
+  labs(title = 'Share of Pothole Reports That Are Duplicates',
+       y = 'Duplicate share', x = NULL)
+```
+
+Both the total and unique requests show recurring seasonal fluctuations, with pronounced peaks in 2017, 2019, and 2023. Unique requests show a similar pattern, but with smaller peaks, suggesting that duplicate reports increase overall reporting activity. Overall, the recurring peaks suggest a seasonal pattern in pothole reports, while unique requests provide a clearer measure of distinct reported incidents.
+
+```{r}
+train_data |> 
+  as_tibble() |> 
+  mutate(
+    date = as.Date(month),
+    month_year = year(date) + if_else(month(date) >= 10, 1, 0),
+    w_month = factor(month.abb[month(date)],
+                     levels = month.abb[c(10:12, 1:9)])
+  ) |> 
+  filter(month_year >= 2017, month_year <= 2024) |>
+  ggplot(aes(x = w_month, y = requests_unique,
+             colour = factor(month_year), group = month_year)) +
+  geom_line() +
+  labs(
+    title = "Seasonal plot by rainy season: unique pothole requests",
+    y = "Unique pothole requests per month", colour = "month_year",
+    x = 'Month'
+  )
+
+```
+
+The seasonal plot shows a recurring pattern in unique pothole requests during rainy seasons. Requests generally rise in the winter months, especially from January to March, then decline toward summer. However, the timing and size of each year’s peak vary, suggesting that winter patterns are less stable than seasonal patterns in summer and early fall, when the number of requests remains consistent.
+
+### Data Transformations
+
+```{r}
+# guerrero method
+lambda <- train_data |> 
+  features(requests_unique, features = guerrero) |> 
+  pull(lambda_guerrero)
+lambda
+```
+
+```{r}
+train_data |> 
+  autoplot(box_cox(requests_unique, lambda)) +
+  labs(
+    title = paste0('Box-Cox transformed unique requests (lambda = ', round(lambda, 2), ')'),
+    y = 'Transformed requests',
+  )
+```
+
+```{r}
+train_data |> 
+  autoplot(log(requests_unique)) +
+  labs(
+    title = 'Log Transformed Pothole Requests',
+    y = 'Transformed requests',
+  ) -> p_log_transformed_pothole
+
+ggsave('figures/log_transformed_pothole_requests.png', plot = p_log_transformed_pothole,
+       width = 8, height = 5, dpi = 300)
+p_log_transformed_pothole
+```
+
+### Decomposition
+
+```{r}
+train_data |> 
+  model(classical_decomposition(requests_unique, type = 'additive')) |> 
+  components() |> 
+  autoplot() +
+  labs(
+    title = 'Additive decomposition (training)'
+  )-> p_add_decomp
+
+ggsave('figures/additive_decomposition_(training).png', plot = p_add_decomp,
+       width = 8, height = 5, dpi = 300)
+p_add_decomp
+```
+
+#### **Additive decomposition interpretation**
+
+The remainder in the additive decomposition shows that errors stay close to 0 in summer, while rising from 1100 to 1200 in winter. This means errors are extremely large during winter and almost nonexistent in summer. For instance, a positive peak of 1000 means there were 1000 more requests than expected based on the trend and season, while negative dips indicate fewer pothole requests. Overall, this suggests winters are harder to predict than summers.
+
+```{r}
+train_data |> 
+  model(classical_decomposition(requests_unique, type = 'multiplicative')) |> 
+  components() |> 
+  autoplot() +
+  labs(
+    title = 'Multiplicative decomposition (training)'
+  )-> p_mult_decomp
+
+ggsave('figures/multiplicative_decomposition_(training).png', plot = p_mult_decomp,
+       width = 8, height = 5, dpi = 300)
+p_mult_decomp
+```
+
+#### **Multiplicative decomposition interpretation**
+
+The remainder in the multiplicative decomposition is distributed more evenly across the summer and winter months than in the additive decomposition. In multiplicative decomposition, if the remainder is close to 1, actual requests match the expected value. Peaks of about 1.5 indicate 50% more requests than expected, and negative dips of 0.8 indicate that actual requests were about 20% lower than expected. The multiplicative decomposition seems to fit monthly pothole requests slightly better because seasonal fluctuations are more similar in size across summer and winter months, indicating that variations are proportional to the level. This finding suggests that an ETS model with multiplicative components may fit the data better and produce more accurate forecasts.
+
+```{r}
+train_data |>
+  model(STL(requests_unique ~ season(window = 'periodic'))) |>
+  components() |>
+  autoplot() +
+  labs(title = 'STL decomposition: original series (training period)')
+```
+
+```{r}
+# log transformed decomposition
+train_data |>
+  model(STL(log(requests_unique) ~ season(window = 'periodic'))) |>
+  components() |>
+  autoplot() +
+  labs(title = 'STL decomposition: log series (training period)')
+```
+
+```{r}
+train_data |>
+  features(requests_unique, feat_stl) |>
+  select(trend_strength, seasonal_strength_year) |>
+  mutate(series = 'original', .before = 1) |>
+  bind_rows(
+    train_data |>
+      features(log(requests_unique), feat_stl) |>
+      select(trend_strength, seasonal_strength_year) |>
+      mutate(series = 'log', .before = 1)
+  )
+```
+
+```{r}
+# Lag plots: each panel plots this month's value against the value
+# k months earlier (lags 1 to 12). Points close to the diagonal line
+# mean months that far apart tend to have similar values.
+train_data |>
+  gg_lag(requests_unique, geom = "point", lags = 1:12) +
+  labs(title = "Lag plots: unique pothole requests (training period)",
+       x = "Value k months earlier", y = "Current value")
+
+```
+
+```{r}
+# the correlation between the series and its own past values, for lags up three years
+# bars outside the dashed blue lines are larger than you'd expect from pure noise
+train_data |>
+  ACF(requests_unique, lag_max = 36) |>
+  autoplot() +
+  labs(title = "Autocorrelation: unique pothole requests (training period)")
+```
+
+### **Precipitation San Diego**
+
+```{r}
+precipitation_airport <- read_csv('data/data.csv', skip = 1) 
+```
+
+```{r}
+precipitation_airport <- precipitation_airport |> 
+  rename(
+    TAVG = `TAVG (Degrees Fahrenheit)`,
+    TMAX = `TMAX (Degrees Fahrenheit)`,
+    TMIN = `TMIN (Degrees Fahrenheit)`,
+    PRCP = `PRCP (Inches)`
+  )
+
+# filter dates
+
+prc <- precipitation_airport |> 
+  as_tsibble(index = Date) |>  filter_index('2016-01-01' ~ .)
+
+has_gaps(prc)
+```
+
+```{r}
+prc |> autoplot(PRCP) +
+  labs(
+    title = 'Daily Precipitaion San Diego'
+  )
+```
+
+```{r}
+# monthly data
+monthly_prcp <- prc |> 
+  # index_by groups by time
+  index_by(Month = yearmonth(Date)) |> 
+  summarise(
+    #na.rm = TRUE ingores missing values
+    PRCP = sum(PRCP, na.rm = TRUE)
+  )
+monthly_prcp |> autoplot(PRCP) +
+  labs(
+    title = 'Monthly Precipitaion San Diego (International Airport Station)'
+  )
+```
+
+## Modeling
+
+### TSLM Modeling
 
 ```{r}
 # Time Series Linear Model - requests_unique
@@ -454,4 +732,308 @@ ggplot() +
     legend.position = "bottom",
     plot.title = element_text(face = "bold")
   )
+```
+
+### **Exponential Smoothing Modeling**
+
+```{r}
+fit_ets <- train_data |> 
+  model(
+    # baseline
+    ses = ETS(requests_unique ~ error('A') + trend('N') + season('N')),
+    # additive errors and season
+    hw_add = ETS(requests_unique ~ error('A') + trend('N') + season('A')),
+    # multiplicative errors and season (winter adds error percentage)
+    ets_mnm = ETS(requests_unique ~ error('M') + trend('N') + season('M')),
+    # additive linear trend
+    ets_mam = ETS(requests_unique ~ error('M') + trend('A') + season('M')),
+    # adding a damped trend
+    ets_madm = ETS(requests_unique ~ error('M') + trend('Ad') + season('M')),
+    # auto selected
+    ets_auto = ETS(requests_unique)
+  )
+```
+
+```{r}
+fit_ets |>  select(ets_auto)
+```
+
+#### Train Accuracy
+
+```{r}
+fit_ets |> 
+  glance() |> 
+  select(.model, AIC, AICc, BIC) |> 
+  arrange(AICc)
+```
+
+#### Forecast Accuracy
+
+```{r}
+fc_all <- fit_ets |>  forecast(h = 12)
+
+fc_all |> 
+  accuracy(pothole_monthly) |> 
+  select(.model, RMSE, MAE, MAPE) |> 
+  left_join(
+    glance(fit_ets) |> select(.model, AICc),
+    by = '.model'
+  ) |>
+  arrange(RMSE) 
+```
+
+### **ETS(A,N,A)**
+
+```{r}
+augment(fit_ets |> select(hw_add)) |>
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = requests_unique, colour = 'Actual')) +
+  geom_line(aes(y = .fitted, colour = 'ETS(A,N,A) fitted')) +
+  labs(
+    title = 'ETS(A,N,A) fitted values vs. actual (training period)',
+    y = 'Number of unique requests'
+  ) -> p_ets_ana
+
+ggsave('figures/ETS(A,N,A)_fitted_values.png', plot = p_ets_ana,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana
+```
+
+```{r}
+fit_ets |> select(hw_add) |> report() 
+```
+
+```{r}
+fc_all |> 
+  filter(.model == 'hw_add') |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, requests_unique, colour = 'red') +
+  labs(title = 'ETS(A,N,A) Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests') -> p_ets_ana_fc
+
+ggsave('figures/ETS(A,N,A)_forecasts.png', plot = p_ets_ana_fc,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana_fc
+```
+
+#### **ETS(A,N,A) Interpretation**
+
+The ETS(A,N,A) model uses additive errors and additive seasonality, with no trend. This model captures the seasonal patterns in the training data fairly well. However, it tends to underestimate unusually large spikes in requests.
+
+The smoothing parameters are alpha and gamma. The alpha value (0.366) indicates that the model considers past observations while allowing the level to adjust as new data becomes available. The small gamma value (0.0001) indicates that the model expects the seasonal pattern to change very little and relies on a stable seasonal structure. The model’s AICc is 1678.17, and its RMSE is 424.24.
+
+The model’s report indicates that January is expected to have about 700 more requests above the level, while the summer months are expected to have about 300 fewer requests below. Because of the additive components, these estimates remain the same every year regardless of the level.
+
+#### **ETS(A,N,A) Residuals and ljung-box test**
+
+```{r}
+gg_tsresiduals(fit_ets |> select(hw_add)) + 
+  labs(
+    title = 'ETS(A,N,A) residuals'
+  )-> p_ets_ana_resid
+
+ggsave('figures/ETS(A,N,A)_residuals.png', plot = p_ets_ana_resid,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana_resid
+```
+
+```{r}
+# ljung-box test
+augment(fit_ets |> select(hw_add)) |>  
+  features(.innov, ljung_box, lag = 24)
+```
+
+### **ETS(M,N,M)**
+
+```{r}
+augment(fit_ets |> select(ets_mnm)) |>
+  ggplot(aes(x = month)) +
+  geom_line(aes(y = requests_unique, colour = "Actual")) +
+  geom_line(aes(y = .fitted, colour = "ETS(M,N,M) fitted")) +
+  labs(
+    title = "ETS(M,N,M) fitted values vs. actual (training period)",
+    y = "Number of unique requests"
+  ) -> p_ets_mnm
+
+ggsave('figures/ETS(M,N,M)_fitted_values.png', plot = p_ets_mnm,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm
+```
+
+```{r}
+fit_ets |> select(ets_mnm) |> report()
+
+```
+
+```{r}
+fc_all |> 
+  filter(.model == 'ets_mnm') |> 
+  autoplot(train_data |> filter_index('2021 Nov' ~ .)) +
+  autolayer(val_data, requests_unique, colour = 'red') +
+  labs(title = 'ETS(M,N,M) Forecasts vs. Actual Validation Data',
+       y = 'Number of unique requests') -> p_ets_mnm_fc
+
+ggsave('figures/ETS(M,N,M)_forecasts.png', plot = p_ets_mnm_fc,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm_fc
+```
+
+#### **ETS(M,N,M) Interpretation**
+
+The ETS(M,N,M) model has multiplicative errors and seasonality and has no trend component. The fitted values closely match historical observations, capturing seasonal peaks and shifts in request volume.
+
+The estimated smoothing parameters provide additional insight into the model’s performance. The alpha value (0.709) indicates that the model places more weight on recent observations, allowing it to adjust more quickly to changes in request volume. Similar to the ETS(A,N,A) model, the small gamma value (0.0001) assumes a stable seasonal pattern. The model’s AICc is 1585.37, and its RMSE is 502.06.
+
+The model’s seasonal indices indicate that requests increase in January, February, March, and April, with estimated increases of about 74% above the level in March, 61% in February and January, and 39% in April, aligning with San Diego’s rainy season.
+
+Confidence intervals are narrower during low-demand months and wider during peak months because the model’s multiplicative errors scale with the level. In contrast, ETS(A,N,A) confidence intervals remain the same in summer and winter.
+
+#### **ETS(M,N,M) Residuals and ljung-box test**
+
+```{r}
+gg_tsresiduals(fit_ets |> select(ets_mnm)) + 
+  labs(
+    title = 'ETS(M,N,M) residuals'
+  )-> p_ets_mnm_resid
+
+ggsave('figures/ETS(M,N,M)_residuals.png', plot = p_ets_mnm_resid,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm_resid
+```
+
+```{r}
+# ljung-box test
+augment(fit_ets |> select(ets_mnm)) |>  
+  features(.innov, ljung_box, lag = 24)
+```
+
+### **Log transformation ETS**
+
+```{r}
+fit_ets_log <- train_data |>
+  model(
+    # original scale models, for comparison
+    ets_mnm = ETS(requests_unique ~ error('M') + trend('N') + season('M')),
+    ets_ana = ETS(requests_unique ~ error('A') + trend('N') + season('A')),
+    # additive ETS on log counts: prop variation via the transformation
+    ets_log_ana = ETS(log(requests_unique) ~ error('A') + trend('N') + season('A')),
+    # Auto-selected ETS on log counts
+    ets_log_auto = ETS(log(requests_unique)),
+    # multiplicative ETS on log counts
+    ets_mnm_log = ETS(log(requests_unique) ~ error('M') + trend('N') + season('M')),
+    # multiplicative ETS with additive trend on log counts
+    ets_mam_log = ETS(log(requests_unique) ~ error('M') + trend('A') + season('M')),
+  )
+```
+
+```{r}
+fit_ets_log |> select(ets_log_auto)
+
+```
+
+#### Train Accuracy on Log Counts
+
+```{r}
+fit_ets_log |> accuracy() |> filter(.model %in% c('ets_mnm','ets_ana','ets_log_ana','ets_mnm_log'))|> 
+  select(.model, RMSE, MAE, MAPE) |> 
+  left_join(
+    glance(fit_ets_log) |> select(.model, AICc),
+    by = '.model') |> arrange(AICc) |>
+  knitr::kable( 
+    digits = 2, caption = 'Training Fit by AICc')
+```
+
+```{r}
+# forecasts are back-transformed to request counts automatically
+fc_ets_log <- fit_ets_log |> forecast(h = 12)
+```
+
+#### Forecast Accuracy
+
+```{r}
+# validation accuracy on the original scale
+fc_ets_log |> 
+  accuracy(pothole_monthly) |>
+  select(.model, RMSE, MAE, MAPE) |> 
+  arrange(RMSE)
+```
+
+```{r}
+fc_ets_log |> filter(.model %in% c('ets_mnm','ets_ana','ets_log_ana', 'ets_mnm_log')) |>
+  accuracy(pothole_monthly) |>
+  select(.model, RMSE, MAE, MAPE) |> 
+  arrange(RMSE) |> 
+  knitr::kable(digits = 2, caption = 'Validation Accuracy by RMSE (2025)')
+```
+
+### **ETS(M,N,M) on log counts**
+
+```{r}
+fit_ets_log |> select(ets_mnm_log) |> report()
+```
+
+```{r}
+fit_ets_log |>
+  select(ets_mnm_log) |>
+  forecast(h = 12) |>
+  autoplot(train_data |> filter_index('2020 Nov' ~ .)) +
+  autolayer(
+    augment(fit_ets_log |> select(ets_mnm_log)) |> filter_index('2020 Nov' ~ .), .fitted, colour = '#1874CD') +
+  autolayer(val_data, requests_unique, colour = "red") +
+  labs(
+    title = 'ETS(M,N,M) on log counts: fitted values and 12-month forecast',
+    subtitle = 'black = training data, blue = fitted, purple = forecast, red = actual',
+    y = 'Number of unique requests', x = NULL
+  ) -> p_ets_mnm_log
+
+ggsave('figures/ETS(M,N,M)_log_counts.png', plot = p_ets_mnm_log,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm_log
+```
+
+```{r}
+gg_tsresiduals(fit_ets_log |> select(ets_mnm_log)) + 
+  labs(
+    title = 'ETS(M,N,M) on log counts residuals'
+  ) -> p_ets_mnm_log_resid
+
+ggsave('figures/ETS(M,N,M)_log_residuals.png', plot = p_ets_mnm_log_resid,
+       width = 8, height = 5, dpi = 300)
+p_ets_mnm_log_resid
+```
+
+### **ETS(A,N,A) on log counts**
+
+```{r}
+fit_ets_log |> select(ets_log_ana) |> report()
+```
+
+```{r}
+fit_ets_log |>
+  select(ets_log_ana) |>
+  forecast(h = 12) |>
+  autoplot(train_data |> filter_index('2020 Nov' ~ .)) +
+  autolayer(
+    augment(fit_ets_log |> select(ets_log_ana)) |> filter_index('2020 Nov' ~ .), .fitted, colour = '#1874CD') +
+  autolayer(val_data, requests_unique, colour = "red") +
+  labs(
+    title = 'ETS(A,N,A) on log counts: fitted values and 12-month forecast',
+    subtitle = 'black = training data, blue = fitted, purple = forecast, red = actual',
+    y = 'Number of unique requests', x = NULL
+  ) -> p_ets_ana_log
+
+ggsave('figures/ETS(A,N,A)_log_counts.png', plot = p_ets_ana_log,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana_log
+```
+
+```{r}
+gg_tsresiduals(fit_ets_log |> select(ets_log_ana)) + 
+  labs(
+    title = 'ETS(A,N,A) on log counts residuals'
+  )-> p_ets_ana_log_resid
+
+ggsave('figures/ETS(A,N,A)_log_residuals.png', plot = p_ets_ana_log_resid,
+       width = 8, height = 5, dpi = 300)
+p_ets_ana_log_resid
 ```

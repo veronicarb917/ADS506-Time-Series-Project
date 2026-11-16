@@ -1,6 +1,6 @@
 ---
 title: "Pothole Requests"
-format: pdf
+format: typst
 editor: visual
 ---
 
