@@ -250,9 +250,13 @@ train_data |>
 train_data |> 
   autoplot(log(requests_unique)) +
   labs(
-    title = 'Log transformed unique requests',
+    title = 'Log Transformed Pothole Requests',
     y = 'Transformed requests',
-  )
+  ) -> p_log_transformed_pothole
+
+ggsave('figures/log_transformed_pothole_requests.png', plot = p_log_transformed_pothole,
+       width = 8, height = 5, dpi = 300)
+p_log_transformed_pothole
 ```
 
 ### Decomposition
@@ -731,14 +735,4 @@ monthly_prcp |> autoplot(PRCP) +
   labs(
     title = 'Monthly Precipitaion San Diego (International Airport Station)'
   )
-```
-
-```{r}
-pothole_monthly |> 
-  autoplot(total_reports) +
-  labs(
-    title = 'Total Pothole Requests Reports',
-    y = 'Number of total reports'
-  )
-
 ```
