@@ -241,8 +241,11 @@ train_data |>
     title = "Seasonal plot by rainy season: unique pothole requests",
     y = "Unique pothole requests per month", colour = "month_year",
     x = 'Month'
-  )
+  ) -> p_seasonal_plot
 
+ggsave('figures/seasonal_plot.png', plot = p_seasonal_plot,
+       width = 8, height = 5, dpi = 300)
+p_seasonal_plot
 ```
 
 The seasonal plot shows a recurring pattern in unique pothole requests during rainy seasons. Requests generally rise in the winter months, especially from January to March, then decline toward summer. However, the timing and size of each year’s peak vary, suggesting that winter patterns are less stable than seasonal patterns in summer and early fall, when the number of requests remains consistent.
@@ -322,8 +325,13 @@ train_data |>
   model(STL(requests_unique ~ season(window = 'periodic'))) |>
   components() |>
   autoplot() +
-  labs(title = 'STL decomposition: original series (training period)')
+  labs(title = 'STL decomposition: original series (training period)') -> p_stl_decomp
+
+ggsave('figures/STL_decomposition_(training).png', plot = p_stl_decomp, width = 8, height = 5, dpi = 300)
+p_stl_decomp
 ```
+
+The STL decomposition shows a strong, consistent annual pattern in unique service requests, with sharp increases occurring around the same time each year. The trend component fluctuates over time, rising around 2022, while the seasonal component remains fairly stable. The decomposition explains much of the variation in requests, but several large residual spikes indicate that unusual fluctuations remain unexplained. Overall, these findings support including annual seasonality in forecasting models while accounting for the rising trend.
 
 ```{r}
 # log transformed decomposition
@@ -333,6 +341,35 @@ train_data |>
   autoplot() +
   labs(title = 'STL decomposition: log series (training period)')
 ```
+
+#### Outliers
+
+```{r}
+outliers_decomp <- train_data |> 
+  model(STL(requests_unique ~ season(period=1), robust=TRUE)) |> 
+  components()
+
+# unusual observations
+outliers_decomp |> 
+  filter(
+    remainder < quantile(remainder, 0.25) - 3 * IQR(remainder) |
+      remainder > quantile(remainder, 0.75) + 3 * IQR(remainder)
+  ) |> 
+  knitr::kable()
+```
+
+```{r}
+outliers_decomp |> autoplot() +
+  labs(
+    title = 'Outliers - Unusual observations shown in STL remainder'
+  )-> p_outliers
+
+ggsave('figures/outliers.png', plot = p_outliers,
+       width = 8, height = 5, dpi = 300)
+p_outliers
+```
+
+The STL decomposition identified three unusually high observations in January 2017, January 2019, and January 2023, with approximately 2,996, 2,703, and 3,155 unique pothole requests, respectively. These observations were retained because they occurred during the high-rainfall season, likely reflecting genuine fluctuations in pothole reporting rather than data errors. While these observations do not establish causality, they highlight a potential limitation of relying solely on historical requests and suggest that incorporating external predictors, such as weather data, could help explain changes in request volume.
 
 ```{r}
 train_data |>
