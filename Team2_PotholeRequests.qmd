@@ -1816,3 +1816,317 @@ ggsave('figures/ETS(A,N,A)_log_residuals.png', plot = p_ets_ana_log_resid,
        width = 8, height = 5, dpi = 300)
 p_ets_ana_log_resid
 ```
+
+## ARIMA Modeling
+
+```{r}
+data <- read.csv("Data/get_it_done_pothole_requests_datasd.csv")
+head(data)
+
+# Filter out duplicates (requests with parent ID's) and add month year column
+data <- data |> 
+  filter(is.na(service_request_parent_id)) |> 
+  mutate(Month = yearmonth(date_requested))
+
+# Check number of unique requests
+nrow(data) # went down from 180k to 125k
+
+# Aggregate into monthly intervals
+data <- data |>
+  count(Month, name = "Requests") |>
+  as_tsibble(index = Month)
+
+# check to make sure there are no months missing
+has_gaps(data)
+
+# Trim off first and last incomplete months
+data <-  data |> filter_index('Jun 2016' ~ 'Oct 2026')
+```
+
+```{r}
+# Train and validation
+train <- data |> filter_index(. ~ 'Oct 2024')
+validation <- data |> filter_index('Nov 2024' ~ 'Oct 2025')
+test <- data |> filter_index('Nov 2025' ~ 'Oct 2026')
+
+# plot to observe trend or seasonality
+train |>
+  autoplot() +
+  scale_x_yearmonth(
+    date_breaks = "6 months"
+  ) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+train |> gg_season(Requests)
+```
+
+```{r}
+# get differencing results
+train |>
+  features(Requests, unitroot_nsdiffs) |>
+  bind_cols(
+    train |> features(Requests, unitroot_ndiffs),
+    train |> features(Requests, unitroot_kpss),
+    train |> features(Requests, feat_stl)
+  )
+# pvalue is 0.1 meaning it is stationary (null hypothesis confirmed)
+# Seasonal strength is < 0.64
+# Seasonal and first order differencing not needed
+
+
+# output the acf and pacf
+train |> 
+  ACF(Requests, lag_max = 48) |> 
+  autoplot() + labs(title = "ACF, No Differencing, No Transformation")
+# first two lags are significant, lag at 12 significant, MA(2)
+# Shows spikes every 6 months
+
+train |> 
+  mutate(D12 = difference(Requests, lag = 12)) |>
+  ACF(D12, lag_max = 36) |> 
+  autoplot() + labs(title = "ACF, Seasonal Differencing, No Transformation")
+# Shows spike at lag 12 but no patterns after that.
+# Will validation with seasonal differencing and without.
+
+train |> 
+  PACF(Requests, lag_max = 36) |> 
+  autoplot() + labs(title = "PACF, No Differencing, No Transformation")
+# suggests AR(1) since 1st lag is significant, no seasonal AR components
+# ACF suggest ARIMA (0,0,2)(0,0,1)[12] and PACF suggests ARIMA(1,0,0)
+```
+
+Candidate ARIMA models: 1) The ACF shows annual oscillations, with the highest auto-correlations at lags 1 and 2. Approximately every twelve months auto-correlations peak with similar strengths. This suggests a nonseasonal MA(2) component and a seasonal MA(1) component, since the next peaks do not occur at exactly at 24 or 36. 2) The PACF shows no seasonal patterns with a peak at the first lag and a majority of other lags with relatively weak auto-correlations. This plot indicates that a non-seasonal AR(1) component should be investigated with no seasonal components. 3) After seasonal differencing, the annual oscillations in the ACF plot went away and still shows a peak at 12, and peaks at the first two lags, meaning we can investigate the MA(2) component alongside seasonal differencing and a seasonal MA(1) term. 4) An automatically selected ARIMA model will also be fit and compared.
+
+```{r}
+# Fit all candidate arima models
+arima_models <- train |> 
+  model( arima100 = ARIMA(Requests ~ pdq(1,0,0) + PDQ(0,0,0)), # from pacf
+         arima002 = ARIMA(Requests ~ pdq(0,0,2) + PDQ(0,0,1, period=12)), # from first acf,
+         seasonal002 = ARIMA(Requests ~ pdq(0,0,2) + PDQ(0,1,1, period=12)), # from 2nd acf
+         autoarima = ARIMA(Requests)
+  )
+
+# Output shows error with seasonal arima002 so will make slight adjustment
+arima_models <- train |> 
+  model( arima100 = ARIMA(Requests ~ pdq(1,0,0) + PDQ(0,0,0)), 
+         sarima002 = ARIMA(Requests ~ pdq(0,0,2) + PDQ(0,0,1, period=12)), 
+         sarima002_sd = ARIMA(Requests ~ pdq(0,0,2) + PDQ(0,1,0, period=12)), # simpler model
+         autoarima = ARIMA(Requests, stepwise = FALSE, approx = FALSE) # optimize auto-selection
+  )
+
+# AICc
+report(arima_models) |> 
+  select(.model, AICc) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# Accuracy
+accuracy(arima_models) |> 
+  select(.model, RMSE, MAE, MAPE) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# Auto Arima Selection
+auto_model <- arima_models |> select(autoarima)
+report(auto_model)
+```
+
+Training Results: The auto-arima selected two non-seasonal and two seasonal AR coefficients, and chose a seasonal difference. This model has the lowest AICc of the four models, suggesting that it has the best balance between the model fit and complexity. It also has the lowest RMSE meaning that it has the lowest magnitude of errors for training data. The two best models based on the AICc and training RMSE are the auto-selected model and the ARIMA(0,0,2) with seasonal differencing.
+
+```{r}
+# Final Candidates
+arima_models <- arima_models |>
+  select(autoarima, sarima002_sd)
+
+ # Residual ACF
+arima_models |>
+  augment() |>
+  ACF(.innov) |>
+  autoplot()
+
+# LJung-Box Residual Auto-correlations significance
+arima_models |>
+  select(sarima002_sd) |>
+  augment() |>
+  features(.innov, ljung_box, lag = 24, dof = 2) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# Residual Plots
+arima_models |> 
+  select(sarima002_sd) |> 
+  gg_tsresiduals()
+
+```
+
+The Arima002010 residual ACF has a negative spike at 12, meaning it may not have captured the recurring seasonal patterns and may indicate that the residuals are not distributed with white noise. After testing this with the Ljung-Box test, the p-value is 0.1, larger than the 0.05 significance level cut-off. Therefore, we can move forward with evaluating these two models. These candidates will be evaluated against the validation set to test performance against unseen data.
+
+```{r}
+# Evaluate on Validation set
+val_fc <- arima_models |> 
+  forecast(new_data = validation)
+
+accuracy(val_fc, validation) |>
+  select(.model, RMSE, MAE, MAPE)  |>
+  arrange(RMSE) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# Plot Validation Forecast
+val_fc |> 
+  autoplot(validation) +
+  facet_wrap(vars(.model), scales = "free_y")
+
+
+```
+
+Validation Results: Based on the RMSE, the Arima002 with seasonal differencing has produced the best forecast against the validation set, as it reduced the magnitude of errors best. However, the residual ACF plot suggests that the model may not have fully captured seasonal patterns. This trade-off must be taken into account. Next, transformations will be applied to test whether these can improve predictive performance.
+
+```{r}
+# Transform and re-select models if needed
+train |> 
+  features(Requests, guerrero)
+
+# Use box-cox transformation with lambda = -0.9
+train_transform <- train |>
+  mutate(bc = box_cox(Requests, -0.9))
+
+train_transform |>
+  features(bc, unitroot_nsdiffs) |>
+  bind_cols(
+    train_bc |> features(bc, unitroot_ndiffs),
+    train_bc |> features(bc, unitroot_kpss)
+  ) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# ACF and PACF with differencing and boxcox
+train_transform |> 
+  gg_tsdisplay(difference(difference(bc, 12)), plot_type = 'partial', lag_max = 48)
+# BoxCox candidates: ARIMA(0,1,2)(0,1,1), ARIMA(2,1,0)(2,1,0), and auto
+
+# Log transform:
+train_transform <- train_bc |>
+  mutate(log = log(Requests))
+train_log |>
+  features(log, unitroot_nsdiffs) |>
+  bind_cols(
+    train_log |> features(log, unitroot_ndiffs),
+    train_log |> features(log, unitroot_kpss)
+  ) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# PACF and ACF with log transform and seasonal diff
+train_transform |> 
+  gg_tsdisplay(difference(log, 12), plot_type = 'partial', lag_max = 48)
+
+# Log candidates: ARIMA(1,0,0)(1,1,0), ARIMA(0,0,4)(0,1,1), auto
+```
+
+```{r}
+# Train models 
+# (lambda changed to -0.4 because -0.89 did not produce feasible point forecasts)
+arima_transformed <- train_transform |>
+  model(
+    bc_arima012011 = ARIMA(box_cox(Requests, -0.4) ~ pdq(0,1,2) + PDQ(0,1,1, period=12)),
+    bc_arima210210 = ARIMA(box_cox(Requests, -0.4) ~ pdq(2,1,0) + PDQ(2,1,0, period = 12)),
+    bc_auto = ARIMA(box_cox(Requests, -0.4)),
+    log_arima100110 = ARIMA(log(Requests) ~ pdq(1,0,0) + PDQ(1,1,0)),
+    log_arima004011 = ARIMA(log(Requests) ~ pdq(0,0,4) + PDQ(0,1,1)),
+    log_auto = ARIMA(log(Requests)),
+    arima_v = ARIMA(Requests),
+    sarima_002sd = ARIMA(Requests ~ pdq(0,0,2) + PDQ(0,1,0, period=12))
+  )
+
+report(arima_transformed)
+
+# Training Residuals 
+arima_transformed |>
+  augment() |>
+  ggplot(aes(x = Month, y = .innov)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(vars(.model), scales = "free_y") +
+  labs(
+    title = "Innovation Residuals by ARIMA Model",
+    x = "Month",
+    y = "Innovation"
+  ) +
+  theme_minimal()
+
+# Validation Accuracy
+val_fc2 <- arima_transformed |> 
+  forecast(new_data = validation)
+accuracy(val_fc2, validation) |>
+  select(.model, RMSE, MAE, MAPE)  |>
+  arrange(RMSE) |>
+  gt() |>
+  fmt_number(decimals = 1)
+
+# Re-examine residuals for bc-auto training fit
+arima_transformed |>
+  select(bc_auto) |>
+  gg_tsresiduals(type = "innovation")
+
+arima_transformed |>
+  select(bc_auto) |>
+  t()
+
+```
+
+Validation Results: Of the box-cox transformed models, the auto-selected model had the lowest AICc and RMSE. The auto log had the best metrics of all the log transformed models. Of all the arima's that were fit, the two models with the lowest RMSE were the auto-arima model with the box-cox transformation and the non-transformed seasonal ARIMA002 model. When comparing the residual plots between these two models, the box-cox transformed model remained without significant auto-correlations unlike ARIMA002. The hyperparameters that were selected for this model are: ARIMA(1,0,0)(2,1,1)\[12\] with no constants.
+
+```{r}
+# Forecast Comparisons
+val_fc2 |>
+  autoplot(train |> filter_index('2022 Jan' ~ .)) +
+  autolayer(validation, Requests, color = "black") +
+  facet_wrap(vars(.model)) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  ) +
+  labs(
+    title = "Validation Forecast vs. Actual",
+    x = "Month",
+    y = "Requests"
+  )
+```
+
+Evaluate final ARIMA model on test set:
+
+```{r}
+# Combine training and validation sets for re-training
+new_train <- bind_rows(train, validation)
+
+# re-train final model
+bc_auto <-
+  new_train |>
+  model(
+    auto_bc = ARIMA(box_cox(Requests, -0.4))
+  )
+test_fc <- bc_auto |>
+  forecast(new_data = test)
+accuracy(test_fc, test) |>
+  select(.model, RMSE, MAE, MAPE) |>
+  gt() |>
+  fmt_number(decimals = 1)
+test_fc |>
+  autoplot(new_train) +
+  autolayer(test, Requests, color = "black") +
+  labs(
+    title = "Test Forecast vs. Actual",
+    x = "Month",
+    y = "Requests"
+  )
+
+```
+
+Test Evaluation: Compared to the validation set, the model predicted the test set with a lower RMSE of 287.2. The 95% confidence interval is much wider than the actual test data, which may be a cause for concern. However, the point forecasts predicted the levels of the seasonal variations quite well, with the error of predicting the winter peak a few months later than the actual peak, summer troughs slightly higher than actual values and spring slightly lower than actual.
