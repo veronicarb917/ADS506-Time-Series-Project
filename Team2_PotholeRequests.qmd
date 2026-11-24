@@ -14,6 +14,7 @@ library(tidyverse)
 library(fpp3)  
 library(patchwork)
 library(gt)
+library(slider)
 dir.create('figures', showWarnings = FALSE)
 ```
 
@@ -137,6 +138,524 @@ pothole_daily |>
   arrange(desc(.n))
 ```
 
+### Investigating the Lead Times
+
+```{r}
+lead_time <- pothole_unique |>
+  select(date_requested, date_closed) |>
+  mutate(
+    date_requested = as.Date(date_requested),
+    date_closed = as.Date(date_closed),
+    month = floor_date(date_requested, unit = "month"),
+    lead_time = as.numeric(date_closed - date_requested)
+  )
+
+mo_lead_time <- lead_time |>
+  group_by(month) |>
+  summarise(
+    avg_lead_time = mean(lead_time, na.rm = TRUE),
+    n_closed = sum(!is.na(lead_time)),
+    .groups = "drop"
+  )
+
+scale_factor <- max(mo_lead_time$avg_lead_time, na.rm = TRUE) /
+  max(pothole_monthly$requests_unique, na.rm = TRUE)
+
+ggplot() +
+  geom_line(data = mo_lead_time,
+            aes(x = month, y = avg_lead_time, color = "Lead Time")) +
+  geom_line(data = pothole_monthly |> mutate(month = as.Date(month)),
+            aes(x = month, y = requests_unique * scale_factor, 
+                color = "Requests")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(
+      ~ . / scale_factor,
+      name = "Monthly Requests")) +
+  scale_colour_manual(
+    values = c(
+      "Lead Time" = "#0072B2",
+      "Requests" = "#D55E00")) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Month",
+    x = "Month") +
+  theme(
+    legend.position = "none",
+    axis.title.y.left = element_text(color = "#0072B2"),
+    axis.text.y.left = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "#D55E00"),
+    axis.text.y.right = element_text(color = "#D55E00")
+  )
+
+ggplot(pothole_monthly, aes(x = month, y = requests_unique)) +
+  geom_line()
+```
+
+```{r}
+lead_time_weekly <- lead_time |>
+  filter(is.na(lead_time) | lead_time >= 0) |>
+  mutate(week = floor_date(date_requested, unit = "week")) |>
+  group_by(week) |>
+  summarise(
+    avg_lead_time_w = mean(lead_time, na.rm = TRUE),
+    n_requests_w    = n(),
+    n_closed_w      = sum(!is.na(lead_time)),
+    .groups = "drop"
+  ) |>
+  filter(week > as.Date("2016-05-15"))
+
+# Limits from the full period, so every snapshot shares the same scales
+lead_max     <- max(lead_time_weekly$avg_lead_time_w, na.rm = TRUE)
+req_max      <- max(lead_time_weekly$n_requests_w, na.rm = TRUE)
+scale_factor <- lead_max / req_max
+
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2016-05-15", "2026-10-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2016-05-15", "2018-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2016-2018)",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2018-12-31", "2020-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2019-2020)",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2020-12-31", "2022-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2021-2022)",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2022-12-31", "2024-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2023-2024)",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+# last complete
+last_complete <- lead_time_weekly |>
+  filter(n_closed_w / n_requests_w >= 0.95) |>
+  pull(week) |>
+  max()
+
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = c(as.Date("2025-01-01"), last_complete),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2023-2024)",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+#### 4-week rolling-average
+
+```{r}
+
+lead_time_weekly <- lead_time |>
+  filter(is.na(lead_time) | lead_time >= 0) |>
+  mutate(week = floor_date(date_requested, unit = "week")) |>
+  group_by(week) |>
+  summarise(
+    avg_lead_time_w = mean(lead_time, na.rm = TRUE),
+    sum_lead_w      = sum(lead_time, na.rm = TRUE),
+    n_requests_w    = n(),
+    n_closed_w      = sum(!is.na(lead_time)),
+    .groups = "drop"
+  ) |>
+  filter(week > as.Date("2016-05-15")) |>
+  arrange(week) |>
+  mutate(
+    # 4-week rolling average, weighted by closed requests, roughly centered
+    roll_lead_w = slide_dbl(sum_lead_w, sum, .before = 2, .after = 1, .complete = TRUE) /
+      slide_dbl(n_closed_w, sum, .before = 2, .after = 1, .complete = TRUE)
+  )
+
+# # 8-week rolling average, weighted by closed requests, roughly centered
+# mutate(
+#   roll_lead_w = slide_dbl(sum_lead_w, sum, .before = 4, .after = 3, .complete = TRUE) /
+#     slide_dbl(n_closed_w, sum, .before = 4, .after = 3, .complete = TRUE)
+# )
+
+# Limits from the full period, so every snapshot shares the same scales
+lead_max     <- max(lead_time_weekly$avg_lead_time_w, na.rm = TRUE)
+req_max      <- max(lead_time_weekly$n_requests_w, na.rm = TRUE)
+scale_factor <- lead_max / req_max
+last_complete <- lead_time_weekly |>
+  filter(n_closed_w / n_requests_w >= 0.95) |>
+  pull(week) |>
+  max()
+
+
+# full series
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = c(min(lead_time_weekly$week), last_complete),
+    ylim = c(0, lead_max)
+  ) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = expansion(mult = 0.01)) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2016-Present)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2016-05-15", "2018-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2016-2018)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2018-12-31", "2020-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2019-2020)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2020-12-31", "2022-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2021-2022)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2022-12-31", "2024-12-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2023-2024)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+# last complete
+last_complete <- lead_time_weekly |>
+  filter(n_closed_w / n_requests_w >= 0.95) |>
+  pull(week) |>
+  max()
+
+
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = c(as.Date("2025-01-01"), last_complete),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2025-present)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests"))  +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2016-05-15", "2021-10-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2016-2022)",
+    subtitle = "4-week rolling average",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )-> p_lead_time_5year_16_22
+
+ggsave('figures/average_lead_time_weekly(2025-2022).png', plot = p_lead_time_5year_16_22, width = 8, height = 5, dpi = 300)
+
+p_lead_time_5year_16_22
+```
+
+```{r}
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests"))  +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = as.Date(c("2021-10-31", "2026-10-31")),
+    ylim = c(0, lead_max)
+  ) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2022-present)",
+    subtitle = "4-week rolling average",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )-> p_lead_time_5year_22_present
+
+ggsave('figures/average_lead_time_weekly(2022-present).png', plot = p_lead_time_5year_22_present, width = 8, height = 5, dpi = 300)
+
+p_lead_time_5year_22_present
+```
+
 ### Data Partitioning
 
 ```{r}
@@ -241,8 +760,11 @@ train_data |>
     title = "Seasonal plot by rainy season: unique pothole requests",
     y = "Unique pothole requests per month", colour = "month_year",
     x = 'Month'
-  )
+  ) -> p_seasonal_plot
 
+ggsave('figures/seasonal_plot.png', plot = p_seasonal_plot,
+       width = 8, height = 5, dpi = 300)
+p_seasonal_plot
 ```
 
 The seasonal plot shows a recurring pattern in unique pothole requests during rainy seasons. Requests generally rise in the winter months, especially from January to March, then decline toward summer. However, the timing and size of each year’s peak vary, suggesting that winter patterns are less stable than seasonal patterns in summer and early fall, when the number of requests remains consistent.
@@ -322,8 +844,13 @@ train_data |>
   model(STL(requests_unique ~ season(window = 'periodic'))) |>
   components() |>
   autoplot() +
-  labs(title = 'STL decomposition: original series (training period)')
+  labs(title = 'STL decomposition: original series (training period)') -> p_stl_decomp
+
+ggsave('figures/STL_decomposition_(training).png', plot = p_stl_decomp, width = 8, height = 5, dpi = 300)
+p_stl_decomp
 ```
+
+The STL decomposition shows a strong, consistent annual pattern in unique service requests, with sharp increases occurring around the same time each year. The trend component fluctuates over time, rising around 2022, while the seasonal component remains fairly stable. The decomposition explains much of the variation in requests, but several large residual spikes indicate that unusual fluctuations remain unexplained. Overall, these findings support including annual seasonality in forecasting models while accounting for the rising trend.
 
 ```{r}
 # log transformed decomposition
@@ -333,6 +860,35 @@ train_data |>
   autoplot() +
   labs(title = 'STL decomposition: log series (training period)')
 ```
+
+#### Outliers
+
+```{r}
+outliers_decomp <- train_data |> 
+  model(STL(requests_unique ~ season(period=1), robust=TRUE)) |> 
+  components()
+
+# unusual observations
+outliers_decomp |> 
+  filter(
+    remainder < quantile(remainder, 0.25) - 3 * IQR(remainder) |
+      remainder > quantile(remainder, 0.75) + 3 * IQR(remainder)
+  ) |> 
+  knitr::kable()
+```
+
+```{r}
+outliers_decomp |> autoplot() +
+  labs(
+    title = 'Outliers - Unusual observations shown in STL remainder'
+  )-> p_outliers
+
+ggsave('figures/outliers.png', plot = p_outliers,
+       width = 8, height = 5, dpi = 300)
+p_outliers
+```
+
+The STL decomposition identified three unusually high observations in January 2017, January 2019, and January 2023, with approximately 2,996, 2,703, and 3,155 unique pothole requests, respectively. These observations were retained because they occurred during the high-rainfall season, likely reflecting genuine fluctuations in pothole reporting rather than data errors. While these observations do not establish causality, they highlight a potential limitation of relying solely on historical requests and suggest that incorporating external predictors, such as weather data, could help explain changes in request volume.
 
 ```{r}
 train_data |>
@@ -418,16 +974,22 @@ monthly_prcp |> autoplot(PRCP) +
 
 ```{r}
 # Time Series Linear Model - requests_unique
+
+# Baseline TSLM Models
 req_tslm <- train_data %>%
   model(
     auto_tslm = TSLM(requests_unique),
     tr_tslm = TSLM(requests_unique ~ trend()),
     sea_tslm = TSLM(requests_unique ~ season()),
-    tslm = TSLM(requests_unique ~ trend() + season())
+    tslm = TSLM(requests_unique ~ trend() + season()),
+    mean = MEAN(requests_unique),
+    naive = NAIVE(requests_unique),
+    snaive = SNAIVE(requests_unique)
   )
 
 # assessing the model fits
 glance(req_tslm) |>
+  filter(.model %in% c("auto_tslm", "tr_tslm", "sea_tslm", "tslm")) |>
   select(.model, r_squared, adj_r_squared, AIC, AICc, BIC) |>
   arrange(AIC) |>
   mutate(
@@ -446,6 +1008,12 @@ glance(req_tslm) |>
     caption = "TSLM Model Comparison (ranked by AIC)"
   )
 
+req_tslm |>
+  accuracy() |>
+  select(.model, RMSE, MAE, MAPE) |>
+  arrange(RMSE) |>
+  knitr::kable(digits = 0)
+
 train_data %>%
   autoplot(requests_unique) +
   autolayer(
@@ -459,8 +1027,12 @@ train_data %>%
     y = "Number of Requests"
   ) +
   theme_minimal()
+```
 
-# Transformations
+These models served as a baseline, with the TSLM model including trend and seasonality as the top performer. However, the tslm statistics were not optimal (R-squared = 0.56, RMSE = 355, MAPE = 20). Therefore, it could be advantageous to create more complex models that can capture the data more accurately.
+
+```{r}
+# Adding transformations and Fourier Terms
 
 # find lambda for a Box-Cox transformation of the training data
 lambda <- train_data |>
@@ -479,7 +1051,34 @@ p3 <- train_data |> autoplot(box_cox(requests_unique, -0.9)) +
 
 p1 / p2 / p3
 
-# New TSLM models
+req_transform <- train_data |>
+  model(
+    originalt = TSLM(requests_unique ~ trend() + season()),
+    logt = TSLM(log(requests_unique) ~ trend() + season()),
+    boxcoxt = TSLM(box_cox(requests_unique, -0.9) ~ trend() + season())
+  )
+
+req_transform |>
+  select(originalt) |>
+  gg_tsresiduals() &
+  labs(title = "Residual Assessment - Original Data")
+
+req_transform |>
+  select(logt) |>
+  gg_tsresiduals() &
+  labs(title = "Residual Assessment - Log Transformation")
+
+req_transform |>
+  select(boxcoxt) |>
+  gg_tsresiduals() &
+  labs(title = "Residual Assessment - Box-Cox Transformation")
+
+```
+
+A visual inspection of the transformed data and residual plots suggested a slight preference for the Box-Cox Transformation over the Logarithmic Transformation.
+
+```{r}
+# New TSLM models with Box-Cox Transformation and Fourier Terms
 
 # fit TSLM models with different seasonal specifications
 tslm_models <- train_data %>%
@@ -518,9 +1117,11 @@ glance(tslm_models) |>
     caption = "TSLM Model Comparison (ranked by AIC)"
   )
 
-# extract fitted values and residuals for each model
-fits <- tslm_models |>
-  augment()
+tslm_models |>
+  accuracy() |>
+  select(.model, RMSE, MAE, MAPE) |>
+  arrange(RMSE) |>
+  knitr::kable(digits = 0)
 
 # plot the fitted values against the original training data
 tslm_fits <- tslm_models |>
@@ -545,27 +1146,35 @@ ggplot() +
     colour = "Model"
   ) +
   theme_minimal()
+```
 
-# set up cross-validation method with the top three models
+```{r}
+# set up cross-validation method
 
 # Set the final eligible CV origin
 cv_cutoff <- max(train_data$month) - 12
 
 # Keep only windows with 12 months of validation data available
 cv_tslm <- train_data |>
-  stretch_tsibble(.init = 60, .step = 3) |>
+  stretch_tsibble(.init = 60, .step = 12) |>
   group_by(.id) |>
   filter(max(month) <= cv_cutoff) |>
   ungroup()
 
 cv_tslm_models <- cv_tslm %>%
   model(
+    tslm = TSLM(requests_unique ~ trend() + season()),
+    bc_sea = TSLM(box_cox(requests_unique, lambda) ~ trend() + season()),
     bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
                    fourier(period = 12, K = 1)),
     bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
                    fourier(period = 12, K = 2)),
     bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
-                   fourier(period = 12, K = 3))
+                   fourier(period = 12, K = 3)),
+    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 4)),
+    bc_f5 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 5))
   )
 
 cv_fc <- cv_tslm_models |>
@@ -615,28 +1224,35 @@ cv_accuracy_summary <- cv_accuracy |>
 
 knitr::kable(
   cv_accuracy_summary,
-  digits = 2,
+  digits = 0,
   caption = "Rolling-Origin Cross-Validation Accuracy"
 )
+```
 
-# Forecasting validation subset with the Box-Cox Transformed, Fourier K = 1
-# TSLM model
+```{r}
+# Forecasting validation data with a subset of models
 
 tslm_final <- train_data |>
   model(
-    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
-                   fourier(period = 12, K = 1)),
-    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
-                   fourier(period = 12, K = 2))
+    tslm = TSLM(requests_unique ~ trend() + season()),
+    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 4))
   )
 
 tslm_final_fc <- tslm_final |>
   forecast(h = 12)
 
+# tslm_final_fc_med <- tslm_final_fc |>
+#   mutate(
+#     median_forecast = quantile(requests_unique, 0.5)
+#   )
+
 tslm_final_fc_med <- tslm_final_fc |>
   mutate(
     median_forecast = quantile(requests_unique, 0.5)
-  )
+  ) |>
+  hilo(level = c(80, 95)) |>
+  unpack_hilo(c(`80%`, `95%`))
 
 tslm_final_accuracy <- tslm_final_fc_med |>
   as_tibble() |>
@@ -661,19 +1277,21 @@ tslm_final_accuracy <- tslm_final_fc_med |>
       abs((requests_unique - median_forecast) / requests_unique),
       na.rm = TRUE
     ) * 100
-  )
+  ) |>
+  arrange(RMSE)
 
 knitr::kable(
   tslm_final_accuracy,
   digits = 2,
   caption = "Final TSLM Validation Accuracy"
 )
+```
 
+```{r}
 # Plot forecasted values, fitted values, training data and validation data
 
 # Extract fitted values
 tslm_final_fits <- tslm_final |>
-  select(bc_f1) |>
   augment() |>
   mutate(
     fitted_original = inv_box_cox(.fitted, lambda)
@@ -681,6 +1299,32 @@ tslm_final_fits <- tslm_final |>
 
 # Plot
 ggplot() +
+  # 95% prediction intervals
+  geom_ribbon(
+    data = tslm_final_fc_med |> as_tibble(),
+    aes(
+      x = month,
+     ymin = `95%_lower`,
+     ymax = `95%_upper`,
+     fill = .model
+   ),
+    alpha = 0.12,
+    inherit.aes = FALSE
+  ) +
+
+  # 80% prediction intervals
+  geom_ribbon(
+   data = tslm_final_fc_med |> as_tibble(),
+    aes(
+      x = month,
+      ymin = `80%_lower`,
+      ymax = `80%_upper`,
+     fill = .model
+    ),
+   alpha = 0.22,
+   inherit.aes = FALSE
+  ) +
+  
   # Training data
   geom_line(
     data = train_data |> as_tibble(),
@@ -688,10 +1332,14 @@ ggplot() +
     linewidth = 0.8
   ) +
 
-  # Fitted values
+  # Fitted values for both models
   geom_line(
-    data = tslm_final_fits |> filter(.model == "bc_f1") |> as_tibble(),
-    aes(x = month, y = .fitted, colour = "Fitted values"),
+    data = tslm_final_fits |> as_tibble(),
+    aes(
+      x = month,
+      y = .fitted,
+      colour = paste0(.model, " fitted")
+    ),
     linewidth = 0.8
   ) +
 
@@ -702,35 +1350,166 @@ ggplot() +
     linewidth = 0.8
   ) +
 
-  # Forecast
+  # Forecasts for both models
   geom_line(
-    data = tslm_final_fc_med |> filter(.model == "bc_f1") |> as_tibble(),
-    aes(x = month, y = median_forecast, colour = "Forecast"),
-    linewidth = 0.8,
+    data = tslm_final_fc_med |> as_tibble(),
+    aes(
+      x = month,
+      y = median_forecast,
+      colour = paste0(.model, " forecast")
+    ),
+    linewidth = 0.9,
     linetype = "dashed"
   ) +
-  
+
   scale_colour_manual(
-    values = c(
-      "Training data" = "black",
-      "Fitted values" = "#2C7FB8",
-      "Validation data" = "#D95F02",
-      "Forecast" = "#31A354"
-    )
-  ) +
-  
+  breaks = c(
+    "Training data",
+    "Validation data",
+    "tslm fitted",
+    "tslm forecast",
+    "bc_f4 fitted",
+    "bc_f4 forecast"
+  ),
+  values = c(
+    "Training data" = "#404040",
+    "Validation data" = "#000000",
+    "tslm fitted" = "#0072B2",
+    "tslm forecast" = "#0072B2",
+    "bc_f4 fitted" = "#D55E00",
+    "bc_f4 forecast" = "#D55E00"
+  )
+) +
+
+  # Labels
   labs(
-    title = "TSLM: Actual vs Fitted vs Forecast",
-    subtitle = "Box-Cox transformation with Fourier K = 1",
+    title = "Final TSLM Model Comparison",
+    subtitle = "Baseline TSLM vs Box-Cox Fourier K = 4",
     x = "Month",
     y = "Unique Requests",
     colour = NULL
   ) +
-  
+
+  # Theme
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    plot.title = element_text(face = "bold")
+    plot.title = element_text(face = "bold"),
+    legend.text = element_text(size = 9)
+  )
+```
+
+```{r}
+# Plot forecasted values, fitted values, training data and validation data
+
+# Extract fitted values
+tslm_final_fits <- tslm_final |>
+  augment() |>
+  mutate(
+    fitted_original = inv_box_cox(.fitted, lambda)
+  )
+
+# Plot
+ggplot() +
+  # 95% prediction intervals
+  geom_ribbon(
+    data = tslm_final_fc_med |> filter(.model == "tslm") |> as_tibble(),
+    aes(
+      x = month,
+     ymin = `95%_lower`,
+     ymax = `95%_upper`,
+     fill = .model
+   ),
+   fill = "#0072B2", 
+   alpha = 0.12,
+    inherit.aes = FALSE
+  ) +
+
+  # 80% prediction intervals
+  geom_ribbon(
+   data = tslm_final_fc_med |> filter(.model == "tslm") |> as_tibble(),
+    aes(
+      x = month,
+      ymin = `80%_lower`,
+      ymax = `80%_upper`,
+     fill = .model
+    ),
+   fill = "#0072B2",
+   alpha = 0.22,
+   inherit.aes = FALSE
+  ) +
+  
+  # Training data
+  geom_line(
+    data = train_data |> as_tibble(),
+    aes(x = month, y = requests_unique, colour = "Training data"),
+    linewidth = 0.8
+  ) +
+
+  # Fitted values for both models
+  geom_line(
+    data = tslm_final_fits |> as_tibble(),
+    aes(
+      x = month,
+      y = .fitted,
+      colour = paste0(.model, " fitted")
+    ),
+    linewidth = 0.8
+  ) +
+
+  # Validation data
+  geom_line(
+    data = val_data |> as_tibble(),
+    aes(x = month, y = requests_unique, colour = "Validation data"),
+    linewidth = 0.8
+  ) +
+
+  # Forecasts for both models
+  geom_line(
+    data = tslm_final_fc_med |> as_tibble(),
+    aes(
+      x = month,
+      y = median_forecast,
+      colour = paste0(.model, " forecast")
+    ),
+    linewidth = 0.9,
+    linetype = "dashed"
+  ) +
+
+  scale_colour_manual(
+  breaks = c(
+    "Training data",
+    "Validation data",
+    "tslm fitted",
+    "tslm forecast",
+    "bc_f4 fitted",
+    "bc_f4 forecast"
+  ),
+  values = c(
+    "Training data" = "#404040",
+    "Validation data" = "#000000",
+    "tslm fitted" = "#0072B2",
+    "tslm forecast" = "#0072B2",
+    "bc_f4 fitted" = "#D55E00",
+    "bc_f4 forecast" = "#D55E00"
+  )
+) +
+
+  # Labels
+  labs(
+    title = "Final TSLM Model Comparison",
+    subtitle = "Baseline TSLM vs Box-Cox Fourier K = 4",
+    x = "Month",
+    y = "Unique Requests",
+    colour = NULL
+  ) +
+
+  # Theme
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold"),
+    legend.text = element_text(size = 9)
   )
 ```
 
