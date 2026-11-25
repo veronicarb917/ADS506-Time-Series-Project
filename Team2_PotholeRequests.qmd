@@ -191,6 +191,8 @@ ggplot(pothole_monthly, aes(x = month, y = requests_unique)) +
   geom_line()
 ```
 
+### Weekly lead time
+
 ```{r}
 lead_time_weekly <- lead_time |>
   filter(is.na(lead_time) | lead_time >= 0) |>
@@ -223,142 +225,6 @@ ggplot(lead_time_weekly) +
   ) +
   labs(
     title = "Average Pothole Request Lead Time Per Week",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2016-05-15", "2018-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2016-2018)",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2018-12-31", "2020-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2019-2020)",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2020-12-31", "2022-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2021-2022)",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2022-12-31", "2024-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2023-2024)",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-# last complete
-last_complete <- lead_time_weekly |>
-  filter(n_closed_w / n_requests_w >= 0.95) |>
-  pull(week) |>
-  max()
-
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time")) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = c(as.Date("2025-01-01"), last_complete),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2023-2024)",
     x = "Week"
   ) +
   theme(
@@ -407,189 +273,6 @@ last_complete <- lead_time_weekly |>
   filter(n_closed_w / n_requests_w >= 0.95) |>
   pull(week) |>
   max()
-
-
-# full series
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
-  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
-            linewidth = 0.9, na.rm = TRUE) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = c(min(lead_time_weekly$week), last_complete),
-    ylim = c(0, lead_max)
-  ) +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = expansion(mult = 0.01)) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2016-Present)",
-    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
-  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
-            linewidth = 0.9, na.rm = TRUE) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2016-05-15", "2018-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2016-2018)",
-    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
-  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
-            linewidth = 0.9, na.rm = TRUE) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2018-12-31", "2020-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2019-2020)",
-    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
-  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
-            linewidth = 0.9, na.rm = TRUE) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2020-12-31", "2022-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2021-2022)",
-    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
-  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
-            linewidth = 0.9, na.rm = TRUE) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = as.Date(c("2022-12-31", "2024-12-31")),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2023-2024)",
-    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
-```
-
-```{r}
-# last complete
-last_complete <- lead_time_weekly |>
-  filter(n_closed_w / n_requests_w >= 0.95) |>
-  pull(week) |>
-  max()
-
-
-ggplot(lead_time_weekly) +
-  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
-  geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
-  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
-            linewidth = 0.9, na.rm = TRUE) +
-  scale_y_continuous(
-    name = "Average Lead Time (Days)",
-    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
-  ) +
-  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
-  coord_cartesian(
-    xlim = c(as.Date("2025-01-01"), last_complete),
-    ylim = c(0, lead_max)
-  ) +
-  labs(
-    title = "Average Pothole Request Lead Time Per Week (2025-present)",
-    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
-    x = "Week"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "black"),
-    axis.text.y.right  = element_text(color = "black")
-  )
 ```
 
 ```{r}
@@ -656,29 +339,57 @@ ggsave('figures/average_lead_time_weekly(2022-present).png', plot = p_lead_time_
 p_lead_time_5year_22_present
 ```
 
+```{r}
+# full series
+ggplot(lead_time_weekly) +
+  geom_line(aes(x = week, y = n_requests_w * scale_factor, color = "Requests")) +
+  # geom_line(aes(x = week, y = avg_lead_time_w, color = "Lead Time"), alpha = 0.35) +
+  geom_line(aes(x = week, y = roll_lead_w, color = "Lead Time"),
+            linewidth = 0.9, na.rm = TRUE) +
+  scale_y_continuous(
+    name = "Average Lead Time (Days)",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Number of Weekly Requests")
+  ) +
+  scale_colour_manual(values = c("Lead Time" = "#0072B2", "Requests" = "black")) +
+  coord_cartesian(
+    xlim = c(min(lead_time_weekly$week), last_complete),
+    ylim = c(0, lead_max)
+  ) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = expansion(mult = 0.01)) +
+  labs(
+    title = "Average Pothole Request Lead Time Per Week (2016-Present)",
+    subtitle = "Faint line: weekly average. Bold line: 4-week rolling average.",
+    x = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title.y.left  = element_text(color = "#0072B2"),
+    axis.text.y.left   = element_text(color = "#0072B2"),
+    axis.title.y.right = element_text(color = "black"),
+    axis.text.y.right  = element_text(color = "black")
+  )
+```
+
 ### Data Partitioning
 
 ```{r}
+# new partition
 # training set to fit models
 train_data <- pothole_monthly |> 
-  filter_index(. ~ '2024 Oct')
+  filter_index(. ~ '2025 Oct')
 
 # validation set to compare models and chose the best performing model
 val_data <- pothole_monthly |> 
-  filter_index('2024 Nov' ~ '2025 Oct')
-
-# test set for final evaluation 
-test_data <- pothole_monthly |> 
-  filter_index('2025 Nov' ~ .)
+  filter_index('2025 Nov' ~ '2026 Oct')
 ```
 
 ```{r}
-tibble(
-  set = c('Train', 'Validation', 'Test'),
-  first = c(min(train_data$month), min(val_data$month), min(test_data$month)),
-  last = c(max(train_data$month), max(val_data$month), max(test_data$month)),
-  months = c(nrow(train_data), nrow(val_data), nrow(test_data))
-)
+# tibble(
+#   set = c('Train', 'Validation', 'Test'),
+#   first = c(min(train_data$month), min(val_data$month), min(test_data$month)),
+#   last = c(max(train_data$month), max(val_data$month), max(test_data$month)),
+#   # months = c(nrow(train_data), nrow(val_data), nrow(test_data))
+# )
 ```
 
 **Note:** We’re only using the training and validation sets, so we'll exclude the test set for now.
@@ -968,7 +679,111 @@ monthly_prcp |> autoplot(PRCP) +
   )
 ```
 
-## Modeling
+```{r}
+# monthly rainfall and pothole series joined and add last month's rainfall lag is created BEFORE splitting, so the first validation month (Nov 2025) gets October 2025's rainfall instead of NA.
+model_data <- pothole_monthly |>
+  left_join(
+    monthly_prcp |> as_tibble() |> rename(month = Month),
+    by = 'month'
+  ) |>
+  mutate(prcp_lag1 = lag(PRCP)) |>        
+  filter_index('2016 Jun' ~ '2026 Oct')   
+
+# Check: no missing rainfall values in the modeling period
+model_data |> as_tibble() |> summarise(missing_prcp = sum(is.na(PRCP)),
+                                       missing_lag  = sum(is.na(prcp_lag1)))
+```
+
+```{r}
+model_data
+```
+
+```{r}
+# partition with precipitation data
+train_data <- model_data |> filter_index(. ~ '2025 Oct')            
+val_data   <- model_data |> filter_index('2025 Nov' ~ '2026 Oct')
+```
+
+# Modeling
+
+## Final Fit
+
+```{r}
+fit <- train_data |>
+  model(
+    # ETS(M,N,M) on log counts
+    ets_mnm_log = ETS(log(requests_unique) ~ error('M') + trend('N') + season('M')),
+    # TSLM
+    
+    # ARIMA
+
+  )
+
+```
+
+## Fit with precipitation
+
+```{r}
+fit_prcp <- train_data |>
+  model(
+    # ETS cannot include external predictors so it will not include precp
+    ets_mnm_log = ETS(log(requests_unique) ~ error('M') + trend('N') + season('M')),
+    
+    # TSLM draft with precipitation
+    tslm_prcp = TSLM(requests_unique ~ trend() + season() + PRCP + prcp_lag1),
+    
+    # ARIMA draft with precipitation
+    arima_prcp = ARIMA(requests_unique ~ PRCP + prcp_lag1)
+  )
+```
+
+```{r}
+fc <- fit |> forecast(new_data = val_data)
+fc_prcp    <- fit_prcp    |> forecast(new_data = val_data)
+```
+
+### Accuracy
+
+```{r}
+bind_rows(
+  fc |>
+    accuracy(model_data, list(RMSE = RMSE, MAE = MAE, MAPE = MAPE, MASE = MASE)) |>
+    mutate(version = 'A: no precipitation'),
+  fc_prcp |>
+    accuracy(model_data, list(RMSE = RMSE, MAE = MAE, MAPE = MAPE, MASE = MASE)) |>
+    mutate(version = 'B: with precipitation')
+) |>
+  select(version, .model, RMSE, MAE, MAPE, MASE) |>
+  arrange(RMSE)
+```
+
+## Final Forecast plots
+
+```{r}
+#| fig-height: 7
+recent <- train_data |> filter_index('2022 Nov' ~ .)
+
+fc |>
+  autoplot(recent, level = 80) +
+  autolayer(val_data, requests_unique, colour = 'black', linetype = 'dashed') +
+  facet_wrap(~.model, ncol = 1) +
+  labs(title = 'Version A: validation forecasts without precipitation',
+       subtitle = 'Dashed line = actual validation data',
+       y = 'Unique pothole requests', x = NULL) +
+  theme(legend.position = 'none')
+```
+
+```{r}
+#| fig-height: 7
+fc_prcp |>
+  autoplot(recent, level = 80) +
+  autolayer(val_data, requests_unique, colour = "black", linetype = 'dashed') +
+  facet_wrap(~.model, ncol = 1) +
+  labs(title = 'Version B: validation forecasts with precipitation',
+       subtitle = 'Dashed line = actual validation data',
+       y = 'Unique pothole requests', x = NULL) +
+  theme(legend.position = 'none')
+```
 
 ### TSLM Modeling
 
