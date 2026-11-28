@@ -637,7 +637,7 @@ train_data |>
 ### **Precipitation San Diego**
 
 ```{r}
-precipitation_airport <- read_csv('data/data.csv', skip = 1) 
+precipitation_airport <- read_csv('Data/data.csv', skip = 1) 
 ```
 
 ```{r}
@@ -799,12 +799,16 @@ req_tslm <- train_data %>%
     tslm = TSLM(requests_unique ~ trend() + season()),
     mean = MEAN(requests_unique),
     naive = NAIVE(requests_unique),
-    snaive = SNAIVE(requests_unique)
+    snaive = SNAIVE(requests_unique),
+    auto_tslm_p = TSLM(requests_unique ~ PRCP),
+    tr_tslm_p = TSLM(requests_unique ~ PRCP + trend()),
+    sea_tslm_p = TSLM(requests_unique ~ PRCP + season()),
+    tslm_p = TSLM(requests_unique ~ PRCP + trend() + season())
   )
 
 # assessing the model fits
 glance(req_tslm) |>
-  filter(.model %in% c("auto_tslm", "tr_tslm", "sea_tslm", "tslm")) |>
+  filter(.model %in% c("auto_tslm", "tr_tslm", "sea_tslm", "auto_tslm_p", "tr_tslm_p","tr_tslm_p", "sea_tslm_p", "tslm_p")) |>
   select(.model, r_squared, adj_r_squared, AIC, AICc, BIC) |>
   arrange(AIC) |>
   mutate(
@@ -823,6 +827,7 @@ glance(req_tslm) |>
     caption = "TSLM Model Comparison (ranked by AIC)"
   )
 
+# assessing model accuracy
 req_tslm |>
   accuracy() |>
   select(.model, RMSE, MAE, MAPE) |>
@@ -844,7 +849,7 @@ train_data %>%
   theme_minimal()
 ```
 
-These models served as a baseline, with the TSLM model including trend and seasonality as the top performer. However, the tslm statistics were not optimal (R-squared = 0.56, RMSE = 355, MAPE = 20). Therefore, it could be advantageous to create more complex models that can capture the data more accurately.
+These models served as a baseline, and the TSLM model including precipitation, trend and seasonality outperformed all of the other models. However, the model selection statistics were not optimal (R-squared = 0.68). Therefore, it could be advantageous to create more complex models that can capture the data more accurately. An important observation is that including the precipitation data in the model leads to improvements in the accuracy measurements. Therefore, precipitation will be included in the subsequent TSLM models.
 
 ```{r}
 # Adding transformations and Fourier Terms
@@ -899,16 +904,23 @@ A visual inspection of the transformed data and residual plots suggested a sligh
 tslm_models <- train_data %>%
   model(
     tslm = TSLM(requests_unique ~ trend() + season()),
-    bc_sea = TSLM(box_cox(requests_unique, lambda) ~ trend() + season()),
-    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    tslm_p = TSLM(requests_unique ~ PRCP + trend() + season()),
+    bc_sea = TSLM(box_cox(requests_unique, lambda) ~ 
+                    PRCP + trend() + season()),
+    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 1)),
-    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 2)),
-    bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 3)),
-    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 4)),
-    bc_f5 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f5 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 5))
   )
 
@@ -963,6 +975,8 @@ ggplot() +
   theme_minimal()
 ```
 
+Visually, the models appear to perform similarly. However, the model selection and accuracy statistics help to tease apart the details. The R-squared (0.716) and AIC values (-1699) show that the highest-ranking Box-Cox transformed model with k = 2 Fourier terms would be the better selection than the lowest-ranking baseline TSLM models (R-squared = 0.685 and 0.546, AIC = 1319 and 1358). However, the accuracy measurements tell a different story. The accuracy rankings show that the baseline TSLM models outperform all other models (RMSE = 300 and 360) and the Box-Cox transformed model with k = 2 Fourier terms exhibits the worst accuracy (RMSE = 475).
+
 ```{r}
 # set up cross-validation method
 
@@ -976,25 +990,75 @@ cv_tslm <- train_data |>
   filter(max(month) <= cv_cutoff) |>
   ungroup()
 
-cv_tslm_models <- cv_tslm %>%
+cv_tslm_models <- cv_tslm |>
   model(
     tslm = TSLM(requests_unique ~ trend() + season()),
-    bc_sea = TSLM(box_cox(requests_unique, lambda) ~ trend() + season()),
-    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    tslm_p = TSLM(requests_unique ~ PRCP + trend() + season()),
+    bc_sea = TSLM(box_cox(requests_unique, lambda) ~ 
+                    PRCP + trend() + season()),
+    bc_f1 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 1)),
-    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 2)),
-    bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f3 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 3)),
-    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 4)),
-    bc_f5 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    bc_f5 = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 5))
   )
 
-cv_fc <- cv_tslm_models |>
-  forecast(h = 12)
+# cv_fc <- cv_tslm_models |>
+#   forecast(h = 12)
 
+# future PRCP data for each cv window
+cv_new_data <- cv_tslm |>
+  as_tibble() |>
+  group_by(.id) |>
+  summarize(last_month = max(month), .groups = "drop") |>
+  cross_join(
+    train_data |>
+      as_tibble() |>
+      select(month, PRCP)
+  ) |>
+  group_by(.id) |>
+  filter(
+    month > last_month,
+    month <= last_month + 12
+  ) |>
+  ungroup() |>
+  as_tsibble(key = .id, index = month)
+
+# Check future precipitation data
+cv_new_data |>
+  as_tibble() |>
+  group_by(.id) |>
+  summarise(
+    first_month = min(month),
+    last_month = max(month),
+    n = n(),
+    missing_prcp = sum(is.na(PRCP)),
+    .groups = "drop"
+  )
+
+# generate 12-month forecasts with future PRCP
+cv_fc <- cv_tslm_models |>
+  forecast(new_data = cv_new_data)
+
+# cv_new_data |>
+#   group_by(.id) |>
+#   summarise(
+#     n = n(),
+#     missing_prcp = sum(is.na(PRCP)),
+#     .groups = "drop"
+#   )
+
+# check forecast output
 cv_fc |>
   as_tibble() |>
   group_by(.model) |>
@@ -1006,33 +1070,80 @@ cv_fc |>
 
 #glance(cv_tslm_models)
 
-cv_median <- cv_tslm_models |>
-  forecast(h = 12) |>
-  mutate(.median = quantile(requests_unique, 0.5)) |>
+# cv_median <- cv_tslm_models |>
+#   forecast(h = 12) |>
+#   mutate(.median = quantile(requests_unique, 0.5)) |>
+#   as_tibble()
+
+# names(as_tibble(cv_fc))
+# 
+# head(as_tibble(cv_fc))
+
+# Extract median forecasts
+cv_median <- cv_fc |>
+  mutate(
+    .median = median(requests_unique)
+  ) |>
   as_tibble()
 
-cv_accuracy <- cv_median |>
-  select(.model, .id, month, .median) |>
+# Extract mean forecasts
+cv_forecasts <- cv_median |>
+  as_tibble() |>
+  select(.model, .id, month, .median)
+
+# Prepare actual validation observations
+cv_actuals <- cv_new_data |>
+  as_tibble() |>
+  select(.id, month) |>
   left_join(
     train_data |>
       as_tibble() |>
       select(month, requests_unique),
     by = "month"
+  )
+
+# Calculate accuracy for each model and CV window
+cv_accuracy <- cv_median |>
+  select(.model, .id, month, .median) |>
+  left_join(
+    cv_actuals,
+    by = c(".id", "month")
   ) |>
   group_by(.model, .id) |>
   summarise(
     RMSE = sqrt(mean((requests_unique - .median)^2)),
     MAE = mean(abs(requests_unique - .median)),
-    MAPE = mean(abs((requests_unique - .median) / requests_unique)) * 100,
+    MAPE = if (any(requests_unique == 0)) {
+      NA_real_
+    } else {
+      mean(abs((requests_unique - .median) /
+                 requests_unique)) * 100
+    },
     .groups = "drop"
   )
+
+# cv_accuracy <- cv_median |>
+#   select(.model, .id, month, .median) |>
+#   left_join(
+#     train_data |>
+#       as_tibble() |>
+#       select(month, requests_unique),
+#     by = "month"
+#   ) |>
+#   group_by(.model, .id) |>
+#   summarise(
+#     RMSE = sqrt(mean((requests_unique - .median)^2)),
+#     MAE = mean(abs(requests_unique - .median)),
+#     MAPE = mean(abs((requests_unique - .median) / requests_unique)) * 100,
+#     .groups = "drop"
+#   )
 
 cv_accuracy_summary <- cv_accuracy |>
   group_by(.model) |>
   summarise(
     mean_RMSE = mean(RMSE),
     mean_MAE = mean(MAE),
-    mean_MAPE = mean(MAPE),
+    mean_MAPE = mean(MAPE, na.rm = TRUE),
     .groups = "drop"
   ) |>
   arrange(mean_RMSE)
@@ -1044,18 +1155,32 @@ knitr::kable(
 )
 ```
 
+The cross-validation reinforced that the basic TSLM models, with and without precipitation data, exhibited the best accuracy.
+
 ```{r}
 # Forecasting validation data with a subset of models
 
 tslm_final <- train_data |>
   model(
     tslm = TSLM(requests_unique ~ trend() + season()),
-    bc_f4 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+    tslm_p = TSLM(requests_unique ~ PRCP + trend() + season()),
+    bc_f2 = TSLM(box_cox(requests_unique, lambda) ~ trend() +
+                   fourier(period = 12, K = 4)),
+    bc_f2_p = TSLM(box_cox(requests_unique, lambda) ~ 
+                   PRCP + trend() +
                    fourier(period = 12, K = 4))
   )
 
+# Supply future rainfall values
+val_new_data <- val_data |>
+  select(month, PRCP)
+
+# Generate forecasts
 tslm_final_fc <- tslm_final |>
-  forecast(h = 12)
+  forecast(new_data = val_new_data)
+
+# tslm_final_fc <- tslm_final |>
+#   forecast(h = 12)
 
 # tslm_final_fc_med <- tslm_final_fc |>
 #   mutate(
@@ -1105,6 +1230,145 @@ knitr::kable(
 ```{r}
 # Plot forecasted values, fitted values, training data and validation data
 
+# names(as_tibble(tslm_final_fits))
+
+# Extract fitted values
+tslm_final_fits <- tslm_final |>
+  augment() |>
+  mutate(
+    fitted_original = if_else(
+      .model == "bc_f2",
+      inv_box_cox(.fitted, lambda),
+      .fitted
+    )
+  )
+
+# Create plotting datasets (exclude bc_f2)
+plot_fits <- tslm_final_fits |>
+  as_tibble() |>
+  dplyr::filter(.model %in% c("tslm", "tslm_p"))
+
+plot_fc <- tslm_final_fc_med |>
+  as_tibble() |>
+  dplyr::filter(.model %in% c("tslm", "tslm_p"))
+
+# Plot
+ggplot() +
+  # 95% prediction intervals
+  geom_ribbon(
+    data = plot_fc, #tslm_final_fc_med |> as_tibble() |> dplyr::filter(.model != "bc_f2"),
+    aes(
+      x = month,
+     ymin = `95%_lower`,
+     ymax = `95%_upper`,
+     fill = .model
+   ),
+    alpha = 0.12,
+    inherit.aes = FALSE
+  ) +
+
+  # 80% prediction intervals
+  geom_ribbon(
+   data = plot_fc,
+    aes(
+      x = month,
+      ymin = `80%_lower`,
+      ymax = `80%_upper`,
+     fill = .model
+    ),
+   alpha = 0.22,
+   inherit.aes = FALSE
+  ) +
+  
+  # Training data
+  geom_line(
+    data = train_data |> as_tibble(),
+    aes(x = month, y = requests_unique, colour = "Training data"),
+    linewidth = 0.8
+  ) +
+
+  # Fitted values for both models
+  geom_line(
+    data = plot_fits,
+    aes(
+      x = month,
+      y = .fitted,
+      colour = paste0(.model, " fitted")
+    ),
+    linewidth = 0.8
+  ) +
+
+  # Validation data
+  geom_line(
+    data = val_data |> as_tibble(),
+    aes(x = month, y = requests_unique, colour = "Validation data"),
+    linewidth = 0.8
+  ) +
+
+  # Forecasts
+  geom_line(
+    data = plot_fc,
+    aes(
+      x = month,
+      y = median_forecast,
+      colour = paste0(.model, " forecast")
+    ),
+    linewidth = 0.9,
+    linetype = "dashed"
+  ) +
+
+  scale_colour_manual(
+  breaks = c(
+    "Training data",
+    "Validation data",
+    "tslm fitted",
+    "tslm forecast",
+    "tslm_p fitted",
+    "tslm_p forecast"
+    # "bc_f2 fitted",
+    # "bc_f2 forecast"
+  ),
+  values = c(
+    "Training data" = "#404040",
+    "Validation data" = "#000000",
+    "tslm fitted" = "#0072B2",
+    "tslm forecast" = "#0072B2",
+    "tslm_p fitted" = "#CC79A7",
+    "tslm_p forecast" = "#CC79A7"
+    # "bc_f2 fitted" = "#D55E00",
+    # "bc_f2 forecast" = "#D55E00"
+  )
+) +
+  
+  scale_fill_manual(
+  values = c(
+    "tslm" = "#0072B2",
+    "tslm_p" = "#CC79A7"
+  )
+) +
+
+  # Labels
+  labs(
+    title = "Final TSLM Model Comparison",
+    subtitle = "Baseline TSLM vs TSLM with Precipitation",
+    x = "Month",
+    y = "Unique Requests",
+    colour = NULL
+  ) +
+
+  # Theme
+  theme_minimal() +
+  theme(
+  legend.position = "bottom",
+  legend.box = "vertical",
+  legend.text = element_text(size = 9),
+  plot.title = element_text(face = "bold")
+)
+```
+
+```{r}
+# Plot forecasted values, fitted values, training data and validation data
+
 # Extract fitted values
 tslm_final_fits <- tslm_final |>
   augment() |>
@@ -1116,14 +1380,14 @@ tslm_final_fits <- tslm_final |>
 ggplot() +
   # 95% prediction intervals
   geom_ribbon(
-    data = tslm_final_fc_med |> as_tibble(),
+    data = tslm_final_fc_med |> filter(.model == "tslm") |> as_tibble(),
     aes(
       x = month,
      ymin = `95%_lower`,
      ymax = `95%_upper`,
      fill = .model
    ),
-    alpha = 0.12,
+   alpha = 0.12,
     inherit.aes = FALSE
   ) +
 
@@ -1183,130 +1447,28 @@ ggplot() +
     "Validation data",
     "tslm fitted",
     "tslm forecast",
-    "bc_f4 fitted",
-    "bc_f4 forecast"
+    "tslm_p fitted",
+    "tslm_p forecast",
+    "bc_f2 fitted",
+    "bc_f2 forecast"
   ),
   values = c(
     "Training data" = "#404040",
     "Validation data" = "#000000",
     "tslm fitted" = "#0072B2",
     "tslm forecast" = "#0072B2",
-    "bc_f4 fitted" = "#D55E00",
-    "bc_f4 forecast" = "#D55E00"
+    "tslm_p fitted" = "#CC79A7",
+    "tslm_p forecast" = "#CC79A7",
+    "bc_f2 fitted" = "#D55E00",
+    "bc_f2 forecast" = "#D55E00"
   )
 ) +
-
-  # Labels
-  labs(
-    title = "Final TSLM Model Comparison",
-    subtitle = "Baseline TSLM vs Box-Cox Fourier K = 4",
-    x = "Month",
-    y = "Unique Requests",
-    colour = NULL
-  ) +
-
-  # Theme
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold"),
-    legend.text = element_text(size = 9)
-  )
-```
-
-```{r}
-# Plot forecasted values, fitted values, training data and validation data
-
-# Extract fitted values
-tslm_final_fits <- tslm_final |>
-  augment() |>
-  mutate(
-    fitted_original = inv_box_cox(.fitted, lambda)
-  )
-
-# Plot
-ggplot() +
-  # 95% prediction intervals
-  geom_ribbon(
-    data = tslm_final_fc_med |> filter(.model == "tslm") |> as_tibble(),
-    aes(
-      x = month,
-     ymin = `95%_lower`,
-     ymax = `95%_upper`,
-     fill = .model
-   ),
-   fill = "#0072B2", 
-   alpha = 0.12,
-    inherit.aes = FALSE
-  ) +
-
-  # 80% prediction intervals
-  geom_ribbon(
-   data = tslm_final_fc_med |> filter(.model == "tslm") |> as_tibble(),
-    aes(
-      x = month,
-      ymin = `80%_lower`,
-      ymax = `80%_upper`,
-     fill = .model
-    ),
-   fill = "#0072B2",
-   alpha = 0.22,
-   inherit.aes = FALSE
-  ) +
   
-  # Training data
-  geom_line(
-    data = train_data |> as_tibble(),
-    aes(x = month, y = requests_unique, colour = "Training data"),
-    linewidth = 0.8
-  ) +
-
-  # Fitted values for both models
-  geom_line(
-    data = tslm_final_fits |> as_tibble(),
-    aes(
-      x = month,
-      y = .fitted,
-      colour = paste0(.model, " fitted")
-    ),
-    linewidth = 0.8
-  ) +
-
-  # Validation data
-  geom_line(
-    data = val_data |> as_tibble(),
-    aes(x = month, y = requests_unique, colour = "Validation data"),
-    linewidth = 0.8
-  ) +
-
-  # Forecasts for both models
-  geom_line(
-    data = tslm_final_fc_med |> as_tibble(),
-    aes(
-      x = month,
-      y = median_forecast,
-      colour = paste0(.model, " forecast")
-    ),
-    linewidth = 0.9,
-    linetype = "dashed"
-  ) +
-
-  scale_colour_manual(
-  breaks = c(
-    "Training data",
-    "Validation data",
-    "tslm fitted",
-    "tslm forecast",
-    "bc_f4 fitted",
-    "bc_f4 forecast"
-  ),
+  scale_fill_manual(
   values = c(
-    "Training data" = "#404040",
-    "Validation data" = "#000000",
-    "tslm fitted" = "#0072B2",
-    "tslm forecast" = "#0072B2",
-    "bc_f4 fitted" = "#D55E00",
-    "bc_f4 forecast" = "#D55E00"
+    "tslm" = "#0072B2",
+    "tslm_p" = "#CC79A7",
+    "bc_f2" = "#D55E00"
   )
 ) +
 
@@ -1322,10 +1484,11 @@ ggplot() +
   # Theme
   theme_minimal() +
   theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold"),
-    legend.text = element_text(size = 9)
-  )
+  legend.position = "bottom",
+  legend.box = "vertical",
+  legend.text = element_text(size = 9),
+  plot.title = element_text(face = "bold")
+)
 ```
 
 ### **Exponential Smoothing Modeling**
